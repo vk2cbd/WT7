@@ -88,6 +88,7 @@ class B210Panel(Panel):
         self.power.center_frequency_hz=int(float(self.freq.text())*1_000_000); self.power.sample_rate_hz=int(float(self.rate.text())*1000); self.power.measurement_bandwidth_hz=int(float(self.bw.text())*1000); self.power.update_rate_hz=float(self.gui_hz.text()); self.power.gain_db=self.gain_a.text(); self.power.gain_b_db=self.gain_b.text(); self.power.smoothing_samples=max(1,int(float(self.avg.text()))); self.power.clock_source=self.clock.text().strip() or 'internal'; return self.power
     def set_reading(self,r:B210PowerReading):
         keep=max(1,int(float(self.avg.text() or '1'))); self.a_hist=(self.a_hist+[r.power_a_dbfs])[-keep:]; self.b_hist=(self.b_hist+[r.power_b_dbfs])[-keep:]; aa=sum(self.a_hist)/len(self.a_hist); bb=sum(self.b_hist)/len(self.b_hist)
+        self.latest_power_dbfs=aa; self.latest_power_b_dbfs=bb; self.active_calibrations=getattr(self,'active_calibrations',{})
         self.a_val.setText(f'{aa:0.1f} dBFS'); self.b_val.setText(f'{bb:0.1f} dBFS'); self.a_stats.setText(f'Avg {aa:0.1f} Min {min(self.a_hist):0.1f} Max {max(self.a_hist):0.1f}'); self.b_stats.setText(f'Avg {bb:0.1f} Min {min(self.b_hist):0.1f} Max {max(self.b_hist):0.1f}')
     def power_channel_for_antenna(self, antenna_name: str) -> str:
         attrs = object.__getattribute__(self, '__dict__')
@@ -253,7 +254,7 @@ class ScanSettingsDialog(SimpleDialog):
             cfg=self.scan_config(); save_scan_config(self.app.config_path,cfg)
             starter=getattr(self.app,'start_calibration_scan',None)
             if callable(starter): starter(axis,cfg,self)
-            else: self.set_status('Scan execution is not yet ported to PyQt5; parameters saved.')
+            else: self.set_status('Internal error: scan worker is unavailable.')
         except Exception as exc: self.set_status(str(exc))
     def stop_scan(self):
         stopper=getattr(self.app,'stop_scan',None)
@@ -285,7 +286,7 @@ class YFactorSettingsDialog(SimpleDialog):
             cfg=self.yfactor_config(); save_yfactor_config(self.app.config_path,cfg)
             starter=getattr(self.app,'start_yfactor',None)
             if callable(starter): starter(self,cfg.antenna_name,cfg.hot_target,cfg.cold_mode,cfg.cold_az,cfg.cold_el,cfg.cold_ra,cfg.cold_dec,cfg.count,cfg.dwell_seconds,cfg.alternate_order)
-            else: self.set_status('Y Factor execution is not yet ported to PyQt5; parameters saved.')
+            else: self.set_status('Internal error: Y Factor worker is unavailable.')
         except Exception as exc: self.set_status(str(exc))
     def stop_measurement(self):
         stopper=getattr(self.app,'stop_yfactor',None)
@@ -301,13 +302,18 @@ class PeakCalibrationDialog(SimpleDialog):
         self.target_label=lbl('Target --'); self.antenna_label=lbl('Antenna --'); self.raw_label=lbl('Raw --'); self.offset_label=lbl('Offsets --')
         for r,w in enumerate([self.target_label,self.antenna_label,self.raw_label,self.offset_label],2): g.addWidget(w,r,0,1,2)
         self.status=lbl('Peak Cal workflow controls are visible; live PyQt execution is pending.','faultTag'); self.main.addWidget(self.status)
-        axis=Panel(); ag=QGridLayout(axis); ag.addWidget(lbl('Axis Tracking'),0,0,1,3); az=btn('Track AZ Only'); el=btn('Track EL Only'); stop=btn('Stop Tracking'); az.clicked.connect(lambda:self.set_status('Track AZ Only is not yet ported to PyQt5.')); el.clicked.connect(lambda:self.set_status('Track EL Only is not yet ported to PyQt5.')); stop.clicked.connect(lambda:self.set_status('Peak tracking stopped.'))
+        axis=Panel(); ag=QGridLayout(axis); ag.addWidget(lbl('Axis Tracking'),0,0,1,3); az=btn('Track AZ Only'); el=btn('Track EL Only'); stop=btn('Stop Tracking'); az.clicked.connect(lambda:self.app.start_peak_axis_tracking(self,Axis.AZIMUTH,self.source.currentText(),self.antenna.currentText())); el.clicked.connect(lambda:self.app.start_peak_axis_tracking(self,Axis.ELEVATION,self.source.currentText(),self.antenna.currentText())); stop.clicked.connect(lambda:(self.app.stop_peak_tracking(), self.set_status('Peak tracking stopped.')))
         ag.addWidget(az,1,0); ag.addWidget(el,1,1); ag.addWidget(stop,1,2); self.main.addWidget(axis)
         jog=Panel(); jg=QGridLayout(jog); jg.addWidget(lbl('Manual Peak Jog'),0,0,1,3)
+        dirs={'EL+':Direction.EL_UP.value,'AZ-':Direction.AZ_CCW.value,'AZ+':Direction.AZ_CW.value,'EL-':Direction.EL_DOWN.value}
         for text,row,col in [('EL+',1,1),('AZ-',2,0),('STOP',2,1),('AZ+',2,2),('EL-',3,1)]:
-            b=btn(text); b.clicked.connect(lambda _=False,t=text:self.set_status(f'{t} peak jog is not yet ported to PyQt5.')); jg.addWidget(b,row,col)
+            b=btn(text)
+            if text == 'STOP': b.clicked.connect(lambda:self.app.stop_antenna(self.antenna.currentText()))
+            else:
+                b.pressed.connect(lambda t=text:self.app.start_jog(self.antenna.currentText(),dirs[t])); b.released.connect(lambda:self.app.stop_jog(self.antenna.currentText()))
+            jg.addWidget(b,row,col)
         self.main.addWidget(jog)
-        locks=Panel(); lg=QGridLayout(locks); lg.addWidget(lbl('Calibration Lock'),0,0,1,2); laz=btn('LOCK AZ CAL'); lel=btn('LOCK EL CAL'); laz.clicked.connect(lambda:self.set_status('LOCK AZ CAL is not yet ported to PyQt5.')); lel.clicked.connect(lambda:self.set_status('LOCK EL CAL is not yet ported to PyQt5.')); lg.addWidget(laz,1,0); lg.addWidget(lel,1,1); self.main.addWidget(locks)
+        locks=Panel(); lg=QGridLayout(locks); lg.addWidget(lbl('Calibration Lock'),0,0,1,2); laz=btn('LOCK AZ CAL'); lel=btn('LOCK EL CAL'); laz.clicked.connect(lambda:self.app.lock_peak_axis(self,Axis.AZIMUTH,self.source.currentText(),self.antenna.currentText())); lel.clicked.connect(lambda:self.app.lock_peak_axis(self,Axis.ELEVATION,self.source.currentText(),self.antenna.currentText())); lg.addWidget(laz,1,0); lg.addWidget(lel,1,1); self.main.addWidget(locks)
         row=QHBoxLayout(); row.addStretch(1); close=btn('Close'); close.clicked.connect(self.reject); row.addWidget(close); self.main.addLayout(row); self.refresh_labels()
     def refresh_labels(self):
         target=self.app.current_target; name=self.antenna.currentText(); pos=self.app.positions.get(name); cfg=self.app.configs.get(name)
@@ -334,7 +340,7 @@ PowerMeterPanel = B210Panel
 class WT7App(QWidget):
     def __init__(self,config_path):
         super().__init__(); self.config_path=Path(config_path); self.configs=load_configs(self.config_path); self.site=load_site_config(self.config_path); self.power_config=load_power_config(self.config_path); self.sources=load_sources(self.config_path); self.selected_source_name=self.site.selected_source if self.site.selected_source in self.sources else next(iter(self.sources), '')
-        self.event_log=EventLogger(Path('logs'),self.site.log_retention_days,self.site.log_level); self.state_store=AppStateStore(); self.sessions={}; self.positions={}; self.cards={}; self.current_target=None; self.tracking_kind=''; self.tracking_stop=threading.Event(); self.jog_stops={}; self.b210_stop=threading.Event(); self.b210_thread=None; self.events=queue.Queue(); self.log_handle=None; self.log_writer=None
+        self.event_log=EventLogger(Path('logs'),self.site.log_retention_days,self.site.log_level); self.state_store=AppStateStore(); self.sessions={}; self.positions={}; self.cards={}; self.current_target=None; self.tracking_kind=''; self.tracking_stop=threading.Event(); self.jog_stops={}; self.b210_stop=threading.Event(); self.b210_thread=None; self.events=queue.Queue(); self.log_handle=None; self.log_writer=None; self.scan_stop=threading.Event(); self.scan_thread=None; self.yfactor_stop=threading.Event(); self.yfactor_thread=None; self.peak_stop=threading.Event(); self.peak_thread=None
         self.setWindowTitle(f'WT7 ANTENNA CONTROLLER {APP_VERSION}'); self.resize(1240,760); self.setMinimumSize(1120,680); self.build_ui(); self.style_ui(); self.set_status('Load config, connect antennas, then use guarded jogs.'); self.event_log.info('APP_START',version=APP_VERSION,config=str(config_path))
         self.t_ref=QTimer(self); self.t_ref.timeout.connect(self.update_reference); self.t_ref.start(1000); self.t_evt=QTimer(self); self.t_evt.timeout.connect(self.process_events); self.t_evt.start(100); self.t_pos=QTimer(self); self.t_pos.timeout.connect(self.poll_positions); self.t_pos.start(1000)
     def build_ui(self):
@@ -523,6 +529,145 @@ class WT7App(QWidget):
     def mark_fault(self,name,error):
         self.cards[name].set_state('FAULT'); self.set_status(f'{name}: {error}'); self.event_log.error('ANTENNA_FAULT',antenna=name,error=error)
     def motion_event(self,event,payload): self.event_log.debug(event,payload=payload)
+    def validate_scan_config(self,cfg):
+        if cfg.antenna_name not in self.configs: raise RuntimeError('Select East or West antenna for the scan.')
+        if cfg.antenna_name not in self.sessions: raise RuntimeError(f'{cfg.antenna_name} must be connected before scanning.')
+        if not (0.1 <= cfg.span_degrees <= 30.0): raise RuntimeError('Scan span must be 0.1..30.0 degrees.')
+        if not (0.01 <= cfg.increment_degrees <= cfg.span_degrees): raise RuntimeError('Scan increment must be 0.01 degrees up to the scan span.')
+        if not (0.1 <= cfg.dwell_seconds <= 60.0): raise RuntimeError('Dwell must be 0.1..60.0 seconds.')
+        if not (1 <= cfg.scan_count <= 20): raise RuntimeError('Scan count must be 1..20.')
+    def scan_offsets(self,axis,cfg):
+        vals=[]; x=cfg.span_degrees
+        while x >= -cfg.span_degrees - cfg.increment_degrees*0.5:
+            vals.append(round(max(x,-cfg.span_degrees),6)); x-=cfg.increment_degrees
+        if axis == Axis.AZIMUTH and not cfg.az_scan_high_to_low: vals.reverse()
+        return vals
+    def offset_target(self,target,axis,offset):
+        az=(target.azimuth+offset)%360.0 if axis == Axis.AZIMUTH else target.azimuth
+        el=target.elevation+offset if axis == Axis.ELEVATION else target.elevation
+        return TargetPosition(target.name,az,el)
+    def start_calibration_scan(self,axis,cfg,dialog):
+        if self.scan_thread and self.scan_thread.is_alive(): dialog.set_status('Scan already running.'); return
+        if not self.tracking_kind: dialog.set_status('Start tracking Sun, Moon, or Source before scanning.'); return
+        try:
+            self.validate_scan_config(cfg); meas=self.power.current_power_measurement(cfg.antenna_name)
+            if meas is None: dialog.set_status(f"Start B210 power and wait for CH {self.power.power_channel_for_antenna(cfg.antenna_name)} readings before scanning."); return
+            save_scan_config(self.config_path,cfg); self.scan_stop.clear(); dialog.set_status(f'{axis.value} scan starting on {cfg.antenna_name}.'); self.set_status(f'{axis.value} scan starting on {cfg.antenna_name}.')
+            self.scan_thread=threading.Thread(target=lambda:self.scan_worker(axis,cfg,dialog),daemon=True); self.scan_thread.start()
+        except Exception as exc: dialog.set_status(str(exc))
+    def stop_scan(self):
+        self.scan_stop.set(); self.set_status('Scan stop requested.')
+    def scan_worker(self,axis,cfg,dialog):
+        rows=[]; offsets=self.scan_offsets(axis,cfg); scan_dir=Path(self.config_path).parent/'scan'; scan_dir.mkdir(exist_ok=True); csv_path=scan_dir/f"wt7_scan_{cfg.antenna_name.lower()}_{axis.value}_{datetime.now():%Y%m%d-%H%M%S}.csv"
+        try:
+            for scan_no in range(1,cfg.scan_count+1):
+                for offset in offsets:
+                    if self.scan_stop.is_set(): break
+                    nominal=self.current_tracking_target(self.tracking_kind); target=self.offset_target(nominal,axis,offset); self.emit(lambda t:self.apply_target(t),target); self.emit(lambda s:dialog.set_status(s),f'{axis.value} scan {scan_no}/{cfg.scan_count} offset {offset:+0.2f}')
+                    threads=[]
+                    for name,session in list(self.sessions.items()):
+                        tpos=target if name==cfg.antenna_name else nominal
+                        def worker(name=name,session=session,tpos=tpos):
+                            self.emit(lambda n:self.cards[n].set_state('SCAN'),name)
+                            session.guarded_slew_to(tpos.azimuth,tpos.elevation,session.config.az_track_speed,session.config.el_track_speed,self.scan_stop,self.az_tol(),self.el_tol(),self.site.az_stop_tolerance_degrees,self.site.el_stop_tolerance_degrees,self.site.az_slow_speed,self.site.el_slow_speed,self.site.az_slow_threshold_degrees,self.site.el_slow_threshold_degrees,lambda p,n=name:self.emit(lambda data:self.update_position(*data),(n,p)))
+                        th=threading.Thread(target=worker,daemon=True); threads.append(th); th.start()
+                    for th in threads: th.join()
+                    rows.append(self.collect_power_point(axis,offset,cfg.dwell_seconds,nominal,target,cfg.antenna_name,scan_no))
+                if self.scan_stop.is_set(): break
+            if rows: self.write_scan_csv(csv_path,rows); self.emit(lambda data:self.show_scan_result(*data),(axis,cfg.antenna_name,csv_path,rows))
+            msg='Scan stopped.' if self.scan_stop.is_set() else f'Scan complete: {csv_path.name}'
+            self.emit(lambda m:dialog.set_status(m),msg); self.emit(lambda m:self.set_status(m),msg)
+        except Exception as exc:
+            self.emit(lambda m:dialog.set_status(m),str(exc)); self.emit(lambda m:self.set_status(f'Scan fault: {m}'),str(exc))
+        finally:
+            self.scan_stop.clear()
+            if self.tracking_kind:
+                try: self.slew_all_to_target(self.current_tracking_target(self.tracking_kind),'TRACKING',self.tracking_stop)
+                except Exception: pass
+    def collect_power_point(self,axis,offset,dwell,nominal,target,antenna,scan_no):
+        vals=[]; end=time.monotonic()+dwell
+        while time.monotonic()<end and not self.scan_stop.is_set():
+            m=self.power.current_power_measurement(antenna)
+            if m: vals.append(m)
+            time.sleep(0.1)
+        if not vals: raise RuntimeError('No B210 power measurements were available.')
+        pos=self.positions.get(antenna); avg_val=sum(float(v['power_value']) for v in vals)/len(vals); avg_dbfs=sum(float(v['power_dbfs']) for v in vals)/len(vals)
+        return {'local_time':datetime.now().astimezone().isoformat(timespec='seconds'),'antenna':antenna,'axis':axis.value,'scan_number':scan_no,'offset_degrees':offset,'nominal_az':nominal.azimuth,'nominal_el':nominal.elevation,'target_az':target.azimuth,'target_el':target.elevation,'power_value':avg_val,'power_dbfs':avg_dbfs,'power_unit':vals[-1]['power_unit'],'power_channel':vals[-1]['power_channel'],'sample_count':len(vals),'antenna_az':None if not pos else pos.azimuth,'antenna_el':None if not pos else pos.elevation,'raw_az':None if not pos else pos.raw_azimuth,'raw_el':None if not pos else pos.raw_elevation}
+    def write_scan_csv(self,path,rows):
+        with path.open('w',newline='',encoding='utf-8') as h:
+            w=csv.DictWriter(h,fieldnames=list(rows[0])); w.writeheader(); w.writerows(rows)
+    def show_scan_result(self,axis,antenna,path,rows):
+        d=QDialog(self); d.setWindowTitle(f'{antenna} {axis.value} Scan'); v=QVBoxLayout(d); v.addWidget(lbl(f'{antenna} {axis.value} scan saved to {path.name}'))
+        table=QTableWidget(min(len(rows),30),3); table.setHorizontalHeaderLabels(['Offset deg','Power','Unit'])
+        for r,row in enumerate(rows[:30]):
+            for c,val in enumerate([f"{row['offset_degrees']:+0.2f}",f"{row['power_value']:0.2f}",row['power_unit']]): table.setItem(r,c,QTableWidgetItem(str(val)))
+        v.addWidget(table); close=btn('Close'); close.clicked.connect(d.accept); v.addWidget(close); d.resize(420,360); self.scan_result_dialog=d; d.show()
+    def yfactor_hot_target(self,label):
+        if label == 'Sun': return self.target_for_kind('sun')
+        if label == 'Moon': return self.target_for_kind('moon')
+        return self.current_tracking_target('source')
+    def yfactor_cold_target(self,mode,hot,az,el,ra,dec):
+        if mode == 'Sun AZ / EL 80': s=self.target_for_kind('sun'); return TargetPosition('Cold Sky',s.azimuth,80.0)
+        if mode == 'Moon AZ / EL 80': m=self.target_for_kind('moon'); return TargetPosition('Cold Sky',m.azimuth,80.0)
+        if mode in ('AZ/EL','AZ / EL'): return TargetPosition('Cold Sky',az,el)
+        return source_position('Cold Sky',ra,dec,self.site.latitude,self.site.longitude)
+    def start_yfactor(self,dialog,antenna,label,cold_mode,cold_az,cold_el,cold_ra,cold_dec,count,dwell,alternate):
+        if self.yfactor_thread and self.yfactor_thread.is_alive(): dialog.set_status('Y Factor already running.'); return
+        if antenna not in self.sessions: dialog.set_status('Connect and select an antenna before Y Factor measurement.'); return
+        if self.power.current_power_measurement(antenna) is None: dialog.set_status(f"Start B210 power and wait for CH {self.power.power_channel_for_antenna(antenna)} readings before Y Factor measurement."); return
+        self.yfactor_stop.clear(); dialog.set_status(f'Y Factor starting on {antenna}.'); self.set_status(f'Y Factor starting on {antenna}.')
+        self.yfactor_thread=threading.Thread(target=lambda:self.yfactor_worker(dialog,antenna,label,cold_mode,cold_az,cold_el,cold_ra,cold_dec,count,dwell,alternate),daemon=True); self.yfactor_thread.start()
+    def stop_yfactor(self): self.yfactor_stop.set(); self.set_status('Y Factor stop requested.')
+    def yfactor_worker(self,dialog,antenna,label,cold_mode,cold_az,cold_el,cold_ra,cold_dec,count,dwell,alternate):
+        rows=[]; out=Path(self.config_path).parent/'yfactor'; out.mkdir(exist_ok=True); path=out/f"wt7_yfactor_{antenna.lower()}_{datetime.now():%Y%m%d-%H%M%S}.csv"; session=self.sessions[antenna]
+        try:
+            for name,s in list(self.sessions.items()):
+                if name!=antenna: s.stop_all(); self.emit(lambda n:self.cards[n].set_state('STOPPED'),name)
+            for i in range(1,count+1):
+                phases=('hot','cold') if (not alternate or i%2==1) else ('cold','hot'); results={}
+                for phase in phases:
+                    if self.yfactor_stop.is_set(): break
+                    hot=self.yfactor_hot_target(label); target=hot if phase=='hot' else self.yfactor_cold_target(cold_mode,hot,cold_az,cold_el,cold_ra,cold_dec)
+                    self.emit(lambda s:dialog.set_status(s),f'Measurement {i}/{count}: {phase}.'); self.emit(lambda t:self.apply_target(t),hot)
+                    session.guarded_slew_to(target.azimuth,target.elevation,session.config.az_track_speed,session.config.el_track_speed,self.yfactor_stop,self.az_tol(),self.el_tol(),self.site.az_stop_tolerance_degrees,self.site.el_stop_tolerance_degrees,self.site.az_slow_speed,self.site.el_slow_speed,self.site.az_slow_threshold_degrees,self.site.el_slow_threshold_degrees,lambda p:self.emit(lambda data:self.update_position(*data),(antenna,p)),target_callback=(lambda _p, phase=phase: (self.yfactor_hot_target(label).azimuth,self.yfactor_hot_target(label).elevation) if phase=='hot' else (self.yfactor_cold_target(cold_mode,self.yfactor_hot_target(label),cold_az,cold_el,cold_ra,cold_dec).azimuth,self.yfactor_cold_target(cold_mode,self.yfactor_hot_target(label),cold_az,cold_el,cold_ra,cold_dec).elevation)))
+                    results[phase]=self.collect_yfactor_power(antenna,dwell)
+                if self.yfactor_stop.is_set(): break
+                ydb=results['hot']['power_value']-results['cold']['power_value']; rows.append({'local_time':datetime.now().astimezone().isoformat(timespec='seconds'),'antenna':antenna,'measurement':i,'hot_power':results['hot']['power_value'],'cold_power':results['cold']['power_value'],'power_unit':results['hot']['power_unit'],'y_factor_db':ydb})
+            if rows:
+                with path.open('w',newline='',encoding='utf-8') as h: w=csv.DictWriter(h,fieldnames=list(rows[0])); w.writeheader(); w.writerows(rows)
+                avg=sum(r['y_factor_db'] for r in rows)/len(rows); msg=f'Y Factor {avg:0.1f} dB, n={len(rows)}'
+            else: msg='Y Factor stopped.'
+            self.emit(lambda m:dialog.set_status(m),msg); self.emit(lambda m:self.set_status(m),msg)
+        except Exception as exc:
+            self.emit(lambda m:dialog.set_status(m),str(exc)); self.emit(lambda m:self.set_status(f'Y Factor fault: {m}'),str(exc))
+        finally: self.yfactor_stop.clear()
+    def collect_yfactor_power(self,antenna,dwell):
+        vals=[]; end=time.monotonic()+dwell
+        while time.monotonic()<end and not self.yfactor_stop.is_set():
+            m=self.power.current_power_measurement(antenna)
+            if m: vals.append(m)
+            time.sleep(0.1)
+        if not vals: raise RuntimeError('No B210 power measurements were available.')
+        return {'power_value':sum(float(v['power_value']) for v in vals)/len(vals),'power_dbfs':sum(float(v['power_dbfs']) for v in vals)/len(vals),'power_unit':vals[-1]['power_unit'],'sample_count':len(vals)}
+    def start_peak_axis_tracking(self,dialog,axis,label,antenna):
+        if self.peak_thread and self.peak_thread.is_alive(): dialog.set_status('Peak tracking already running.'); return
+        if antenna not in self.sessions: dialog.set_status('Connect and select an antenna.'); return
+        self.tracking_stop.set(); self.peak_stop.clear(); self.peak_thread=threading.Thread(target=lambda:self.peak_axis_worker(dialog,axis,label,antenna),daemon=True); self.peak_thread.start(); dialog.set_status(f'Tracking {axis.value} only.')
+    def stop_peak_tracking(self): self.peak_stop.set(); self.set_status('Peak tracking stop requested.')
+    def peak_axis_worker(self,dialog,axis,label,antenna):
+        s=self.sessions[antenna]
+        try:
+            while not self.peak_stop.is_set():
+                target=self.yfactor_hot_target(label); pos=s.read_position(); self.emit(lambda data:self.update_position(*data),(antenna,pos))
+                az=target.azimuth if axis==Axis.AZIMUTH else pos.azimuth; el=target.elevation if axis==Axis.ELEVATION else pos.elevation
+                s.guarded_slew_to(az,el,s.config.az_track_speed,s.config.el_track_speed,self.peak_stop,self.az_tol(),self.el_tol(),self.site.az_stop_tolerance_degrees,self.site.el_stop_tolerance_degrees,self.site.az_slow_speed,self.site.el_slow_speed,self.site.az_slow_threshold_degrees,self.site.el_slow_threshold_degrees,lambda p:self.emit(lambda data:self.update_position(*data),(antenna,p)))
+                time.sleep(max(0.1,self.site.track_interval_seconds))
+        except Exception as exc: self.emit(lambda m:dialog.set_status(m),str(exc))
+    def lock_peak_axis(self,dialog,axis,label,antenna):
+        try:
+            if antenna not in self.sessions: raise RuntimeError('Antenna is not connected.')
+            target=self.yfactor_hot_target(label); actual=target.azimuth if axis==Axis.AZIMUTH else target.elevation; pos=self.sessions[antenna].calibrate_axis(axis,actual); save_configs(self.config_path,self.configs); self.emit(lambda data:self.update_position(*data),(antenna,pos)); dialog.refresh_labels(); dialog.set_status(f'{axis.value} calibration locked.')
+        except Exception as exc: dialog.set_status(str(exc))
     def start_b210(self):
         if self.b210_thread and self.b210_thread.is_alive(): self.set_status('B210 already running.'); return
         try: cfg=self.power.meter_config(); self.power_config=self.power.save_config(); save_power_config(self.config_path,self.power_config)
