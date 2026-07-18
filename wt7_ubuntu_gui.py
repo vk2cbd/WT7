@@ -505,7 +505,7 @@ class WT7App(QWidget):
         self.sun=bold('SUN AZ -- EL --'); self.moon=bold('MOON AZ -- EL --'); sr.addWidget(self.sun,1,0,1,2); sr.addWidget(self.moon,1,2,1,5)
         ref=Panel(); ref.setMaximumWidth(260); rg=QGridLayout(ref); rg.setContentsMargins(8,7,8,7); rg.setVerticalSpacing(6); self.local=lbl('Local --'); self.utc=lbl('UTC --'); self.lmst=lbl('LMST --'); rg.addWidget(self.local,0,0); rg.addWidget(self.utc,1,0); rg.addWidget(self.lmst,2,0)
         header.addWidget(src,0); header.addWidget(ref,0); header.addStretch(1); main.addLayout(header)
-        self.status=lbl(''); main.addWidget(self.status)
+        self.status=lbl('')
         for name in self.configs:
             card=AntennaCard(name); card.jog_pressed.connect(self.start_jog); card.jog_released.connect(self.stop_jog); card.stop_clicked.connect(self.stop_antenna); self.cards[name]=card; main.addWidget(card)
         self.power=B210Panel(self.power_config); self.power.app=self; self.power.start_clicked.connect(self.start_b210); self.power.stop_clicked.connect(self.stop_b210); self.power.cal_clicked.connect(lambda:self.info('B210 calibration capture remains in wt7_tk_legacy_gui.py during the PyQt transition.')); self.power.log_start_clicked.connect(self.start_b210_log); self.power.log_stop_clicked.connect(self.stop_b210_log); main.addWidget(self.power)
