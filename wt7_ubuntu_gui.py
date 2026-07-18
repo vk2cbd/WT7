@@ -491,11 +491,14 @@ class WT7App(QWidget):
             b=btn(text,name); b.clicked.connect(cb); top2.addWidget(b)
         top2.addStretch(1); main.addLayout(top2)
         header=QHBoxLayout(); header.setSpacing(8)
-        src=Panel(); sr=QGridLayout(src); sr.setContentsMargins(8,7,8,7); sr.setHorizontalSpacing(18); sr.setVerticalSpacing(6)
-        sr.addWidget(bold('SOURCE'),0,0); self.source_name=lbl('Target --'); sr.addWidget(self.source_name,0,1); sr.addWidget(lbl('AZ','muted'),0,2); self.source_az=bold('--',14); sr.addWidget(self.source_az,0,3); sr.addWidget(lbl('EL','muted'),0,4); self.source_el=bold('--',14); sr.addWidget(self.source_el,0,5); sr.addWidget(lbl('HA','muted'),0,6); self.source_ha=bold('--',14); sr.addWidget(self.source_ha,0,7)
-        self.sun=bold('SUN AZ -- EL --'); self.moon=bold('MOON AZ -- EL --'); sr.addWidget(self.sun,1,0,1,4); sr.addWidget(self.moon,1,4,1,4); sr.setColumnStretch(1,1); sr.setColumnStretch(5,1)
-        ref=Panel(); rg=QGridLayout(ref); rg.setContentsMargins(8,7,8,7); rg.setVerticalSpacing(6); self.local=lbl('Local --'); self.utc=lbl('UTC --'); self.lmst=lbl('LMST --'); rg.addWidget(self.local,0,0); rg.addWidget(self.utc,1,0); rg.addWidget(self.lmst,2,0)
-        header.addWidget(src,4); header.addWidget(ref,1); main.addLayout(header)
+        src=Panel(); sr=QGridLayout(src); sr.setContentsMargins(8,7,8,7); sr.setHorizontalSpacing(12); sr.setVerticalSpacing(6)
+        sr.addWidget(bold('SOURCE'),0,0); self.source_name=lbl('Target --'); self.source_name.setMinimumWidth(210); self.source_name.setMaximumWidth(260); sr.addWidget(self.source_name,0,1)
+        sr.addWidget(lbl('AZ','muted'),0,2); self.source_az=bold('--',14); self.source_az.setMinimumWidth(72); sr.addWidget(self.source_az,0,3)
+        sr.addWidget(lbl('EL','muted'),0,4); self.source_el=bold('--',14); self.source_el.setMinimumWidth(72); sr.addWidget(self.source_el,0,5)
+        sr.addWidget(lbl('HA','muted'),0,6); self.source_ha=bold('--',14); self.source_ha.setMinimumWidth(78); sr.addWidget(self.source_ha,0,7)
+        self.sun=bold('SUN AZ -- EL --'); self.moon=bold('MOON AZ -- EL --'); sr.addWidget(self.sun,1,0,1,2); sr.addWidget(self.moon,1,2,1,5)
+        ref=Panel(); ref.setMaximumWidth(260); rg=QGridLayout(ref); rg.setContentsMargins(8,7,8,7); rg.setVerticalSpacing(6); self.local=lbl('Local --'); self.utc=lbl('UTC --'); self.lmst=lbl('LMST --'); rg.addWidget(self.local,0,0); rg.addWidget(self.utc,1,0); rg.addWidget(self.lmst,2,0)
+        header.addWidget(src,0); header.addWidget(ref,0); header.addStretch(1); main.addLayout(header)
         self.status=lbl(''); main.addWidget(self.status)
         for name in self.configs:
             card=AntennaCard(name); card.jog_pressed.connect(self.start_jog); card.jog_released.connect(self.stop_jog); card.stop_clicked.connect(self.stop_antenna); self.cards[name]=card; main.addWidget(card)
@@ -626,13 +629,21 @@ class WT7App(QWidget):
         for n,s in list(self.sessions.items()):
             def worker(n=n,s=s):
                 try:
-                    effective_target=self.apply_scan_offset(target,n)
-                    self.emit(lambda name:self.cards[name].set_state('SLEWING'),n); s.config.limits.assert_position_allowed(effective_target.azimuth,effective_target.elevation)
+                    effective_target=self.apply_scan_offset(target,n); display_state=self.movement_display_state(n,s,effective_target,activity)
+                    self.emit(lambda data:self.cards[data[0]].set_state(data[1]),(n,display_state)); s.config.limits.assert_position_allowed(effective_target.azimuth,effective_target.elevation)
                     s.guarded_slew_to(effective_target.azimuth,effective_target.elevation,s.config.az_track_speed,s.config.el_track_speed,stop,self.az_tol(),self.el_tol(),self.site.az_stop_tolerance_degrees,self.site.el_stop_tolerance_degrees,self.site.az_slow_speed,self.site.el_slow_speed,self.site.az_slow_threshold_degrees,self.site.el_slow_threshold_degrees,lambda p,n=n:self.emit(lambda data:self.update_position(*data),(n,p)))
                     if not stop.is_set(): self.emit(lambda name:self.cards[name].set_state(activity),n)
                 except Exception as e: self.emit(lambda data:self.mark_fault(*data),(n,str(e)))
             t=threading.Thread(target=worker,daemon=True); threads.append(t); t.start()
         for t in threads: t.join()
+    def movement_display_state(self,name,session,target,activity):
+        if activity != 'TRACKING': return 'SLEWING'
+        pos=self.positions.get(name)
+        if not pos: return 'SLEWING'
+        try: az_error=abs(session.config.limits.azimuth_delta_to_target(pos.azimuth,target.azimuth))
+        except Exception: az_error=abs(shortest_angle_delta(pos.azimuth,target.azimuth))
+        el_error=abs(target.elevation-pos.elevation); gross_az=max(self.site.az_slow_threshold_degrees,self.az_tol()*3.0); gross_el=max(self.site.el_slow_threshold_degrees,self.el_tol()*3.0)
+        return 'SLEWING' if az_error > gross_az or el_error > gross_el else 'TRACKING'
     def az_tol(self): return abs(self.site.az_track_tolerance_degrees)
     def el_tol(self): return abs(self.site.el_track_tolerance_degrees)
     def current_tracking_target(self,kind):
