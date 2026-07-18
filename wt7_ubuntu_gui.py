@@ -602,14 +602,19 @@ class WT7App(QWidget):
         except Exception as e: self.emit(lambda m:self.set_status(f'Tracking fault: {m}'),str(e))
     def park_all(self):
         if not self.sessions: self.set_status('Connect antennas before parking.'); return
-        self.tracking_stop.set(); stop=threading.Event(); self.set_status('Parking antennas.')
+        self.tracking_stop.set(); self.tracking_kind=''; stop=threading.Event(); sessions=list(self.sessions.items()); self.set_status('Parking antennas.')
+        for n,_s in sessions: self.cards[n].set_state('PARKING')
+        def park_one(n,s):
+            try:
+                s.config.limits.assert_position_allowed(s.config.park_az,s.config.park_el)
+                s.guarded_slew_to(s.config.park_az,s.config.park_el,s.config.az_track_speed,s.config.el_track_speed,stop,self.az_tol(),self.el_tol(),self.site.az_stop_tolerance_degrees,self.site.el_stop_tolerance_degrees,self.site.az_slow_speed,self.site.el_slow_speed,self.site.az_slow_threshold_degrees,self.site.el_slow_threshold_degrees,lambda p,n=n:self.emit(lambda data:self.update_position(*data),(n,p)))
+                if not stop.is_set(): self.emit(lambda name:self.cards[name].set_state('PARKED'),n)
+            except Exception as e: self.emit(lambda data:self.mark_fault(*data),(n,str(e)))
         def worker():
-            for n,s in list(self.sessions.items()):
-                try:
-                    self.emit(lambda name:self.cards[name].set_state('PARKING'),n); s.config.limits.assert_position_allowed(s.config.park_az,s.config.park_el)
-                    s.guarded_slew_to(s.config.park_az,s.config.park_el,s.config.az_track_speed,s.config.el_track_speed,stop,self.az_tol(),self.el_tol(),self.site.az_stop_tolerance_degrees,self.site.el_stop_tolerance_degrees,self.site.az_slow_speed,self.site.el_slow_speed,self.site.az_slow_threshold_degrees,self.site.el_slow_threshold_degrees,lambda p,n=n:self.emit(lambda data:self.update_position(*data),(n,p)))
-                    self.emit(lambda name:self.cards[name].set_state('PARKED'),n)
-                except Exception as e: self.emit(lambda data:self.mark_fault(*data),(n,str(e)))
+            threads=[]
+            for n,s in sessions:
+                t=threading.Thread(target=lambda n=n,s=s: park_one(n,s),name=f'Park{n}',daemon=True); threads.append(t); t.start()
+            for t in threads: t.join()
             self.emit(lambda m:self.set_status(m),'Park complete.')
         self.run_thread(worker,'Park')
     def slew_all_to_target(self,target,activity,stop):
