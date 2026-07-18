@@ -270,28 +270,53 @@ class TrackingDialog(SimpleDialog):
         except Exception as exc: self.fail(exc)
 
 class SourcesDialog(SimpleDialog):
+    NAME_COL=0; RA_COL=1; DEC_COL=2; AZ_COL=3; EL_COL=4; FLUX_COL=5
     def __init__(self,app):
-        super().__init__(app,'Sources'); self.table=QTableWidget(0,4); self.table.setHorizontalHeaderLabels(['Name','RA h','Dec deg','Flux 4800 MHz']); self.main.addWidget(self.table)
+        super().__init__(app,'Sources'); self.table=QTableWidget(0,6); self.table.setHorizontalHeaderLabels(['Name','RA h','Dec deg','Current AZ','Current EL','Flux 4800 MHz']); self.main.addWidget(self.table)
         for src in app.sources.values(): self.add_row(src)
-        row=QHBoxLayout(); self.selected=QComboBox(); self.selected.addItems(list(app.sources.keys())); self.selected.setCurrentText(app.selected_source_name); add=btn('Add Row'); delete=btn('Delete Row'); add.clicked.connect(lambda:self.add_row(SourceConfig('New Source',0,0,0))); delete.clicked.connect(self.delete_row); row.addWidget(lbl('Selected')); row.addWidget(self.selected); row.addWidget(add); row.addWidget(delete); row.addStretch(1); self.main.addLayout(row); self.resize(520,360); self.buttons()
+        row=QHBoxLayout(); self.selected=QComboBox(); self.refresh_selected_items(); self.selected.setCurrentText(app.selected_source_name); add=btn('Add Row'); delete=btn('Delete Row'); add.clicked.connect(self.add_new_source); delete.clicked.connect(self.delete_row); row.addWidget(lbl('Selected')); row.addWidget(self.selected); row.addWidget(add); row.addWidget(delete); row.addStretch(1); self.main.addLayout(row); self.resize(760,420); self.buttons()
+        self.table.itemChanged.connect(self.on_item_changed); self.timer=QTimer(self); self.timer.timeout.connect(self.update_current_positions); self.timer.start(1000); self.update_current_positions()
+    def readonly_item(self,value='--'):
+        item=QTableWidgetItem(str(value)); item.setFlags(item.flags() & ~Qt.ItemIsEditable); return item
     def add_row(self,src):
         r=self.table.rowCount(); self.table.insertRow(r)
-        for c,val in enumerate([src.name,src.ra_hours,src.dec_degrees,src.flux_4800_mhz]): self.table.setItem(r,c,QTableWidgetItem(str(val)))
+        for c,val in enumerate([src.name,src.ra_hours,src.dec_degrees]): self.table.setItem(r,c,QTableWidgetItem(str(val)))
+        self.table.setItem(r,self.AZ_COL,self.readonly_item('--')); self.table.setItem(r,self.EL_COL,self.readonly_item('--')); self.table.setItem(r,self.FLUX_COL,QTableWidgetItem(str(src.flux_4800_mhz)))
+    def add_new_source(self):
+        self.add_row(SourceConfig('New Source',0,0,0)); self.refresh_selected_items()
     def delete_row(self):
         r=self.table.currentRow()
-        if r >= 0: self.table.removeRow(r)
+        if r >= 0: self.table.removeRow(r); self.refresh_selected_items(); self.update_current_positions()
+    def refresh_selected_items(self):
+        current=self.selected.currentText().strip() if hasattr(self,'selected') else ''
+        names=[]
+        for r in range(self.table.rowCount()):
+            item=self.table.item(r,self.NAME_COL); name=(item.text() if item else '').strip()
+            if name: names.append(name)
+        if not hasattr(self,'selected'): return
+        self.selected.blockSignals(True); self.selected.clear(); self.selected.addItems(names); self.selected.setCurrentText(current if current in names else (names[0] if names else '')); self.selected.blockSignals(False)
+    def on_item_changed(self,item):
+        if item and item.column() == self.NAME_COL: self.refresh_selected_items()
+    def update_current_positions(self):
+        for r in range(self.table.rowCount()):
+            try:
+                name=(self.table.item(r,self.NAME_COL).text() if self.table.item(r,self.NAME_COL) else '').strip() or 'Source'
+                ra=float(self.table.item(r,self.RA_COL).text()); dec=float(self.table.item(r,self.DEC_COL).text())
+                pos=source_position(name,ra,dec,self.app.site.latitude,self.app.site.longitude)
+                self.table.setItem(r,self.AZ_COL,self.readonly_item(f'{pos.azimuth:0.2f}')); self.table.setItem(r,self.EL_COL,self.readonly_item(f'{pos.elevation:0.2f}'))
+            except Exception:
+                self.table.setItem(r,self.AZ_COL,self.readonly_item('--')); self.table.setItem(r,self.EL_COL,self.readonly_item('--'))
     def accept(self):
         try:
             sources={}
             for r in range(self.table.rowCount()):
-                name=(self.table.item(r,0).text() if self.table.item(r,0) else '').strip()
+                name=(self.table.item(r,self.NAME_COL).text() if self.table.item(r,self.NAME_COL) else '').strip()
                 if not name: continue
-                sources[name]=SourceConfig(name,float(self.table.item(r,1).text()),float(self.table.item(r,2).text()),float(self.table.item(r,3).text()))
+                sources[name]=SourceConfig(name,float(self.table.item(r,self.RA_COL).text()),float(self.table.item(r,self.DEC_COL).text()),float(self.table.item(r,self.FLUX_COL).text()))
             if not sources: raise ValueError('At least one source is required')
             selected=self.selected.currentText().strip(); selected=selected if selected in sources else next(iter(sources))
             self.app.sources=sources; self.app.selected_source_name=selected; self.app.site.selected_source=selected; save_sources(self.app.config_path,sources,selected); self.app.set_status('Sources saved.'); super().accept()
         except Exception as exc: self.fail(exc)
-
 class CalibrationDialog(SimpleDialog):
     def __init__(self,app):
         super().__init__(app,'Calibration'); self.tabs=QTabWidget(); self.main.addWidget(self.tabs); self.fields={}
