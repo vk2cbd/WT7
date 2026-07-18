@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 from PyQt5.QtCore import Qt, QSize, QTimer, pyqtSignal
-from PyQt5.QtGui import QFont
+from PyQt5.QtGui import QFont, QPainter, QPen, QColor
 from PyQt5.QtWidgets import QApplication, QCheckBox, QComboBox, QDialog, QDialogButtonBox, QFrame, QGridLayout, QHBoxLayout, QLabel, QLineEdit, QMessageBox, QPushButton, QTabWidget, QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget
 from wt7_antenna import Axis, Direction, Position, SafeAntenna, shortest_angle_delta
 from wt7_astro import TargetPosition, local_sidereal_time, moon_equatorial, moon_position, source_position
@@ -111,6 +111,39 @@ class B210Panel(Panel):
     def log_header(self) -> list[str]:
         return ['utc_time','ch_a_dbfs','ch_a_value','ch_a_unit','ch_a_calibrated','ch_b_dbfs','ch_b_value','ch_b_unit','ch_b_calibrated']
 
+class ScanPlotWidget(QWidget):
+    def __init__(self, axis, rows, parent=None):
+        super().__init__(parent); self.axis=axis; self.rows=rows; self.setMinimumSize(560,340)
+    def paintEvent(self,event):
+        painter=QPainter(self); painter.setRenderHint(QPainter.Antialiasing)
+        w,h=self.width(),self.height(); left,right,top,bottom=58,w-22,22,h-48
+        painter.fillRect(0,0,w,h,QColor('white'))
+        points=[(float(r['offset_degrees']),float(r['power_value'])) for r in self.rows if r.get('power_value') is not None]
+        if not points:
+            painter.drawText(20,40,'No scan data'); return
+        xs=[p[0] for p in points]; ys=[p[1] for p in points]; minx,maxx=min(xs),max(xs); miny,maxy=min(ys),max(ys)
+        if minx==maxx: minx-=1; maxx+=1
+        if miny==maxy: miny-=0.5; maxy+=0.5
+        pad=(maxy-miny)*0.08; miny-=pad; maxy+=pad
+        def px(x): return left+(x-minx)/(maxx-minx)*(right-left)
+        def py(y): return bottom-(y-miny)/(maxy-miny)*(bottom-top)
+        grid=QPen(QColor('#d8d8d8'),1); painter.setPen(grid)
+        for i in range(6):
+            fx=i/5; x=left+fx*(right-left); y=bottom-fx*(bottom-top)
+            painter.drawLine(int(x),top,int(x),bottom); painter.drawLine(left,int(y),right,int(y))
+            painter.setPen(QColor('#333333')); painter.drawText(int(x)-18,bottom+18,f'{minx+fx*(maxx-minx):0.1f}'); painter.drawText(4,int(y)+4,f'{miny+fx*(maxy-miny):0.1f}'); painter.setPen(grid)
+        painter.setPen(QPen(QColor('#222222'),1)); painter.drawLine(left,bottom,right,bottom); painter.drawLine(left,top,left,bottom)
+        if minx <= 0 <= maxx:
+            pen=QPen(QColor('#555555'),1); pen.setStyle(Qt.DashLine); painter.setPen(pen); x=int(px(0)); painter.drawLine(x,top,x,bottom); painter.drawText(x+4,top+14,'boresight')
+        trace=QPen(QColor('#0057b8'),2); painter.setPen(trace); last=None
+        for xval,yval in points:
+            p=(int(px(xval)),int(py(yval)))
+            if last: painter.drawLine(last[0],last[1],p[0],p[1])
+            last=p
+        painter.setBrush(QColor('#0057b8')); painter.setPen(QPen(QColor('#0057b8'),1))
+        for xval,yval in points: painter.drawEllipse(int(px(xval))-3,int(py(yval))-3,6,6)
+        painter.setPen(QColor('#111111')); painter.drawText((left+right)//2-55,h-12,f'{self.axis.value} offset degrees')
+        unit=str(self.rows[-1].get('power_unit','dBFS')); painter.save(); painter.translate(16,(top+bottom)//2+35); painter.rotate(-90); painter.drawText(0,0,unit); painter.restore()
 class SimpleDialog(QDialog):
     def __init__(self, app, title):
         super().__init__(app); self.app=app; self.setWindowTitle(title); self.main=QVBoxLayout(self); self.main.setContentsMargins(12,12,12,12); self.main.setSpacing(8)
@@ -558,12 +591,13 @@ class WT7App(QWidget):
     def stop_scan(self):
         self.scan_stop.set(); self.set_status('Scan stop requested.')
     def scan_worker(self,axis,cfg,dialog):
-        rows=[]; offsets=self.scan_offsets(axis,cfg); scan_dir=Path(self.config_path).parent/'scan'; scan_dir.mkdir(exist_ok=True); csv_path=scan_dir/f"wt7_scan_{cfg.antenna_name.lower()}_{axis.value}_{datetime.now():%Y%m%d-%H%M%S}.csv"
+        rows=[]; offsets=self.scan_offsets(axis,cfg); total_points=max(1,len(offsets)*cfg.scan_count); point_no=0; scan_dir=Path(self.config_path).parent/'scan'; scan_dir.mkdir(exist_ok=True); csv_path=scan_dir/f"wt7_scan_{cfg.antenna_name.lower()}_{axis.value}_{datetime.now():%Y%m%d-%H%M%S}.csv"
         try:
             for scan_no in range(1,cfg.scan_count+1):
                 for offset in offsets:
                     if self.scan_stop.is_set(): break
-                    nominal=self.current_tracking_target(self.tracking_kind); target=self.offset_target(nominal,axis,offset); self.emit(lambda t:self.apply_target(t),target); self.emit(lambda s:dialog.set_status(s),f'{axis.value} scan {scan_no}/{cfg.scan_count} offset {offset:+0.2f}')
+                    point_no+=1
+                    nominal=self.current_tracking_target(self.tracking_kind); target=self.offset_target(nominal,axis,offset); self.emit(lambda t:self.apply_target(t),target); self.emit(lambda s:dialog.set_status(s),f'{axis.value} scan {scan_no}/{cfg.scan_count} point {point_no}/{total_points} offset {offset:+0.2f}')
                     threads=[]
                     for name,session in list(self.sessions.items()):
                         tpos=target if name==cfg.antenna_name else nominal
@@ -598,10 +632,13 @@ class WT7App(QWidget):
             w=csv.DictWriter(h,fieldnames=list(rows[0])); w.writeheader(); w.writerows(rows)
     def show_scan_result(self,axis,antenna,path,rows):
         d=QDialog(self); d.setWindowTitle(f'{antenna} {axis.value} Scan'); v=QVBoxLayout(d); v.addWidget(lbl(f'{antenna} {axis.value} scan saved to {path.name}'))
-        table=QTableWidget(min(len(rows),30),3); table.setHorizontalHeaderLabels(['Offset deg','Power','Unit'])
-        for r,row in enumerate(rows[:30]):
-            for c,val in enumerate([f"{row['offset_degrees']:+0.2f}",f"{row['power_value']:0.2f}",row['power_unit']]): table.setItem(r,c,QTableWidgetItem(str(val)))
-        v.addWidget(table); close=btn('Close'); close.clicked.connect(d.accept); v.addWidget(close); d.resize(420,360); self.scan_result_dialog=d; d.show()
+        v.addWidget(ScanPlotWidget(axis,rows,d))
+        try:
+            best=max(rows,key=lambda row: float(row['power_value']))
+            v.addWidget(lbl(f"Peak sample offset {float(best['offset_degrees']):+0.2f} deg, power {float(best['power_value']):0.2f} {best.get('power_unit','dBFS')}"))
+        except Exception:
+            pass
+        close=btn('Close'); close.clicked.connect(d.accept); v.addWidget(close,alignment=Qt.AlignRight); d.resize(640,440); self.scan_result_dialog=d; d.show()
     def yfactor_hot_target(self,label):
         if label == 'Sun': return self.target_for_kind('sun')
         if label == 'Moon': return self.target_for_kind('moon')
