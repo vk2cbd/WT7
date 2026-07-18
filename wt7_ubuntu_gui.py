@@ -67,10 +67,11 @@ class AntennaCard(Panel):
 class B210Panel(Panel):
     start_clicked=pyqtSignal(); stop_clicked=pyqtSignal(); log_start_clicked=pyqtSignal(); log_stop_clicked=pyqtSignal(); cal_clicked=pyqtSignal()
     def __init__(self,power:PowerConfig):
-        super().__init__(); self.power=power; self.setMinimumHeight(124); self.setMaximumHeight(138)
+        super().__init__(); self.power=power; self.setMinimumHeight(154); self.setMaximumHeight(174)
         main=QVBoxLayout(self); main.setContentsMargins(10,8,10,8); main.setSpacing(0)
         top=QHBoxLayout(); top.setSpacing(10)
-        bottom=QHBoxLayout(); bottom.setSpacing(7)
+        params_row=QHBoxLayout(); params_row.setSpacing(7)
+        actions_row=QHBoxLayout(); actions_row.setSpacing(7)
         self.status=lbl('SDR RELEASED'); self.status.setMinimumWidth(112); self.status.setMaximumWidth(132); self.status.setWordWrap(True); self.status.setObjectName('safe')
         self.a_val=bold('--.-',14); self.b_val=bold('--.-',14); self.a_unit=bold('dBFS'); self.b_unit=bold('dBFS')
         self.gain_a=edit(power.gain_db,40); self.gain_b=edit(power.gain_b_db,40); self.freq=edit(f'{power.center_frequency_hz/1_000_000:0.1f}',72); self.rate=edit(f'{power.sample_rate_hz/1000:0.0f}',64); self.bw=edit(f'{power.measurement_bandwidth_hz/1000:0.0f}',64); self.clock=edit(power.clock_source or 'internal',78); self.avg=edit(power.smoothing_samples,40); self.gui_hz=edit(f'{power.update_rate_hz:0.0f}',40)
@@ -78,13 +79,14 @@ class B210Panel(Panel):
             row.addWidget(bold(name)); row.addWidget(value); row.addWidget(unit); row.addWidget(lbl('Gain','muted')); row.addWidget(gain); row.addWidget(lbl('dB'))
         top.addWidget(bold('B210')); top.addWidget(self.status); add_channel(top,'CH A',self.a_val,self.a_unit,self.gain_a); add_channel(top,'CH B',self.b_val,self.b_unit,self.gain_b); top.addStretch(1)
         for text,widget in [('Freq MHz',self.freq),('Rate ksps',self.rate),('BW kHz',self.bw),('Clock',self.clock),('Avg',self.avg),('GUI Hz',self.gui_hz)]:
-            bottom.addWidget(lbl(text)); bottom.addWidget(widget)
+            params_row.addWidget(lbl(text)); params_row.addWidget(widget)
+        params_row.addStretch(1)
         actions=[('SDR Power On',self.start_clicked,'primary'),('Release SDR',self.stop_clicked,''),('Cal',self.cal_clicked,''),('Start Log',self.log_start_clicked,''),('Stop Log',self.log_stop_clicked,'')]
         for text,sig,name in actions:
-            b=btn(text,name); b.clicked.connect(sig.emit); bottom.addWidget(b)
-        bottom.addStretch(1)
-        gap=QWidget(); gap.setFixedHeight(36); bottom_gap=QWidget(); bottom_gap.setFixedHeight(18)
-        main.addLayout(top); main.addWidget(gap); main.addLayout(bottom); main.addWidget(bottom_gap)
+            b=btn(text,name); b.clicked.connect(sig.emit); actions_row.addWidget(b)
+        actions_row.addStretch(1)
+        gap=QWidget(); gap.setFixedHeight(28); bottom_gap=QWidget(); bottom_gap.setFixedHeight(12)
+        main.addLayout(top); main.addWidget(gap); main.addLayout(params_row); main.addLayout(actions_row); main.addWidget(bottom_gap)
         self.a_hist=[]; self.b_hist=[]
     def meter_config(self):
         return B210PowerMeterConfig(center_frequency_hz=int(float(self.freq.text())*1_000_000), sample_rate_hz=int(float(self.rate.text())*1000), measurement_bandwidth_hz=int(float(self.bw.text())*1000), update_rate_hz=float(self.gui_hz.text()), gain_a_db=float(self.gain_a.text()), gain_b_db=float(self.gain_b.text()), clock_source=self.clock.text().strip() or 'internal', device_args=self.power.b210_device_args)
