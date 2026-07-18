@@ -373,7 +373,7 @@ PowerMeterPanel = B210Panel
 class WT7App(QWidget):
     def __init__(self,config_path):
         super().__init__(); self.config_path=Path(config_path); self.configs=load_configs(self.config_path); self.site=load_site_config(self.config_path); self.power_config=load_power_config(self.config_path); self.sources=load_sources(self.config_path); self.selected_source_name=self.site.selected_source if self.site.selected_source in self.sources else next(iter(self.sources), '')
-        self.event_log=EventLogger(Path('logs'),self.site.log_retention_days,self.site.log_level); self.state_store=AppStateStore(); self.sessions={}; self.positions={}; self.cards={}; self.current_target=None; self.tracking_kind=''; self.tracking_stop=threading.Event(); self.jog_stops={}; self.b210_stop=threading.Event(); self.b210_thread=None; self.events=queue.Queue(); self.log_handle=None; self.log_writer=None; self.scan_stop=threading.Event(); self.scan_thread=None; self.yfactor_stop=threading.Event(); self.yfactor_thread=None; self.peak_stop=threading.Event(); self.peak_thread=None
+        self.event_log=EventLogger(Path('logs'),self.site.log_retention_days,self.site.log_level); self.state_store=AppStateStore(); self.sessions={}; self.positions={}; self.cards={}; self.current_target=None; self.tracking_kind=''; self.tracking_stop=threading.Event(); self.jog_stops={}; self.b210_stop=threading.Event(); self.b210_thread=None; self.events=queue.Queue(); self.log_handle=None; self.log_writer=None; self.scan_stop=threading.Event(); self.scan_thread=None; self.scan_antenna_name=''; self.scan_axis=None; self.scan_offset_degrees=0.0; self.scan_offset_lock=threading.Lock(); self.yfactor_stop=threading.Event(); self.yfactor_thread=None; self.peak_stop=threading.Event(); self.peak_thread=None
         self.setWindowTitle(f'WT7 ANTENNA CONTROLLER {APP_VERSION}'); self.resize(1240,760); self.setMinimumSize(1120,680); self.build_ui(); self.style_ui(); self.set_status('Load config, connect antennas, then use guarded jogs.'); self.event_log.info('APP_START',version=APP_VERSION,config=str(config_path))
         self.t_ref=QTimer(self); self.t_ref.timeout.connect(self.update_reference); self.t_ref.start(1000); self.t_evt=QTimer(self); self.t_evt.timeout.connect(self.process_events); self.t_evt.start(100); self.t_pos=QTimer(self); self.t_pos.timeout.connect(self.poll_positions); self.t_pos.start(1000)
     def build_ui(self):
@@ -517,8 +517,9 @@ class WT7App(QWidget):
         for n,s in list(self.sessions.items()):
             def worker(n=n,s=s):
                 try:
-                    self.emit(lambda name:self.cards[name].set_state('SLEWING'),n); s.config.limits.assert_position_allowed(target.azimuth,target.elevation)
-                    s.guarded_slew_to(target.azimuth,target.elevation,s.config.az_track_speed,s.config.el_track_speed,stop,self.az_tol(),self.el_tol(),self.site.az_stop_tolerance_degrees,self.site.el_stop_tolerance_degrees,self.site.az_slow_speed,self.site.el_slow_speed,self.site.az_slow_threshold_degrees,self.site.el_slow_threshold_degrees,lambda p,n=n:self.emit(lambda data:self.update_position(*data),(n,p)))
+                    effective_target=self.apply_scan_offset(target,n)
+                    self.emit(lambda name:self.cards[name].set_state('SLEWING'),n); s.config.limits.assert_position_allowed(effective_target.azimuth,effective_target.elevation)
+                    s.guarded_slew_to(effective_target.azimuth,effective_target.elevation,s.config.az_track_speed,s.config.el_track_speed,stop,self.az_tol(),self.el_tol(),self.site.az_stop_tolerance_degrees,self.site.el_stop_tolerance_degrees,self.site.az_slow_speed,self.site.el_slow_speed,self.site.az_slow_threshold_degrees,self.site.el_slow_threshold_degrees,lambda p,n=n:self.emit(lambda data:self.update_position(*data),(n,p)))
                     if not stop.is_set(): self.emit(lambda name:self.cards[name].set_state(activity),n)
                 except Exception as e: self.emit(lambda data:self.mark_fault(*data),(n,str(e)))
             t=threading.Thread(target=worker,daemon=True); threads.append(t); t.start()
@@ -577,8 +578,23 @@ class WT7App(QWidget):
         return vals
     def offset_target(self,target,axis,offset):
         az=(target.azimuth+offset)%360.0 if axis == Axis.AZIMUTH else target.azimuth
-        el=target.elevation+offset if axis == Axis.ELEVATION else target.elevation
+        el=max(0.0,min(90.0,target.elevation+offset)) if axis == Axis.ELEVATION else target.elevation
         return TargetPosition(target.name,az,el)
+    def set_scan_offset(self,antenna_name=None,axis=None,offset=0.0):
+        with self.scan_offset_lock:
+            self.scan_antenna_name=antenna_name or ''; self.scan_axis=axis; self.scan_offset_degrees=float(offset) if antenna_name and axis else 0.0
+    def apply_scan_offset(self,target,antenna_name):
+        with self.scan_offset_lock:
+            scan_name=self.scan_antenna_name; axis=self.scan_axis; offset=self.scan_offset_degrees
+        if antenna_name != scan_name or axis is None or offset == 0.0: return target
+        return self.offset_target(target,axis,offset)
+    def average_scan_rows(self,rows,offsets):
+        averaged=[]
+        for offset in offsets:
+            matching=[row for row in rows if row.get('power_value') is not None and float(row.get('offset_degrees',0.0)) == float(offset)]
+            if not matching: continue
+            row=dict(matching[-1]); row['power_value']=sum(float(r['power_value']) for r in matching)/len(matching); row['power_dbfs']=sum(float(r['power_dbfs']) for r in matching)/len(matching); row['sample_count']=sum(int(r.get('sample_count',0)) for r in matching); row['scan_number']='avg'; averaged.append(row)
+        return averaged
     def start_calibration_scan(self,axis,cfg,dialog):
         if self.scan_thread and self.scan_thread.is_alive(): dialog.set_status('Scan already running.'); return
         if not self.tracking_kind: dialog.set_status('Start tracking Sun, Moon, or Source before scanning.'); return
@@ -593,28 +609,24 @@ class WT7App(QWidget):
     def scan_worker(self,axis,cfg,dialog):
         rows=[]; offsets=self.scan_offsets(axis,cfg); total_points=max(1,len(offsets)*cfg.scan_count); point_no=0; scan_dir=Path(self.config_path).parent/'scan'; scan_dir.mkdir(exist_ok=True); csv_path=scan_dir/f"wt7_scan_{cfg.antenna_name.lower()}_{axis.value}_{datetime.now():%Y%m%d-%H%M%S}.csv"
         try:
+            self.set_scan_offset(cfg.antenna_name,axis,offsets[0] if offsets else 0.0)
             for scan_no in range(1,cfg.scan_count+1):
                 for offset in offsets:
                     if self.scan_stop.is_set(): break
                     point_no+=1
-                    nominal=self.current_tracking_target(self.tracking_kind); target=self.offset_target(nominal,axis,offset); self.emit(lambda t:self.apply_target(t),target); self.emit(lambda s:dialog.set_status(s),f'{axis.value} scan {scan_no}/{cfg.scan_count} point {point_no}/{total_points} offset {offset:+0.2f}')
-                    threads=[]
-                    for name,session in list(self.sessions.items()):
-                        tpos=target if name==cfg.antenna_name else nominal
-                        def worker(name=name,session=session,tpos=tpos):
-                            self.emit(lambda n:self.cards[n].set_state('SCAN'),name)
-                            session.guarded_slew_to(tpos.azimuth,tpos.elevation,session.config.az_track_speed,session.config.el_track_speed,self.scan_stop,self.az_tol(),self.el_tol(),self.site.az_stop_tolerance_degrees,self.site.el_stop_tolerance_degrees,self.site.az_slow_speed,self.site.el_slow_speed,self.site.az_slow_threshold_degrees,self.site.el_slow_threshold_degrees,lambda p,n=name:self.emit(lambda data:self.update_position(*data),(n,p)))
-                        th=threading.Thread(target=worker,daemon=True); threads.append(th); th.start()
-                    for th in threads: th.join()
+                    nominal=self.current_tracking_target(self.tracking_kind); target=self.offset_target(nominal,axis,offset); self.set_scan_offset(cfg.antenna_name,axis,offset); self.emit(lambda t:self.apply_target(t),nominal); self.emit(lambda s:dialog.set_status(s),f'{cfg.antenna_name} {axis.value} scan {scan_no}/{cfg.scan_count} point {point_no}/{total_points} offset {offset:+0.2f}')
+                    self.slew_all_to_target(nominal,'SCAN',self.scan_stop)
+                    if self.scan_stop.is_set(): break
                     rows.append(self.collect_power_point(axis,offset,cfg.dwell_seconds,nominal,target,cfg.antenna_name,scan_no))
                 if self.scan_stop.is_set(): break
-            if rows: self.write_scan_csv(csv_path,rows); self.emit(lambda data:self.show_scan_result(*data),(axis,cfg.antenna_name,csv_path,rows))
+            averaged=self.average_scan_rows(rows,offsets)
+            if rows and not self.scan_stop.is_set(): self.write_scan_csv(csv_path,rows,averaged); self.emit(lambda data:self.show_scan_result(*data),(axis,cfg.antenna_name,csv_path,averaged or rows))
             msg='Scan stopped.' if self.scan_stop.is_set() else f'Scan complete: {csv_path.name}'
             self.emit(lambda m:dialog.set_status(m),msg); self.emit(lambda m:self.set_status(m),msg)
         except Exception as exc:
             self.emit(lambda m:dialog.set_status(m),str(exc)); self.emit(lambda m:self.set_status(f'Scan fault: {m}'),str(exc))
         finally:
-            self.scan_stop.clear()
+            self.set_scan_offset(None); self.scan_stop.clear()
             if self.tracking_kind:
                 try: self.slew_all_to_target(self.current_tracking_target(self.tracking_kind),'TRACKING',self.tracking_stop)
                 except Exception: pass
@@ -627,9 +639,11 @@ class WT7App(QWidget):
         if not vals: raise RuntimeError('No B210 power measurements were available.')
         pos=self.positions.get(antenna); avg_val=sum(float(v['power_value']) for v in vals)/len(vals); avg_dbfs=sum(float(v['power_dbfs']) for v in vals)/len(vals)
         return {'local_time':datetime.now().astimezone().isoformat(timespec='seconds'),'antenna':antenna,'axis':axis.value,'scan_number':scan_no,'offset_degrees':offset,'nominal_az':nominal.azimuth,'nominal_el':nominal.elevation,'target_az':target.azimuth,'target_el':target.elevation,'power_value':avg_val,'power_dbfs':avg_dbfs,'power_unit':vals[-1]['power_unit'],'power_channel':vals[-1]['power_channel'],'sample_count':len(vals),'antenna_az':None if not pos else pos.azimuth,'antenna_el':None if not pos else pos.elevation,'raw_az':None if not pos else pos.raw_azimuth,'raw_el':None if not pos else pos.raw_elevation}
-    def write_scan_csv(self,path,rows):
+    def write_scan_csv(self,path,rows,averaged=None):
         with path.open('w',newline='',encoding='utf-8') as h:
-            w=csv.DictWriter(h,fieldnames=list(rows[0])); w.writeheader(); w.writerows(rows)
+            fieldnames=list(rows[0]); w=csv.DictWriter(h,fieldnames=fieldnames); w.writeheader(); w.writerows(rows)
+            if averaged:
+                w.writerow({key:'' for key in fieldnames}); w.writerows(averaged)
     def show_scan_result(self,axis,antenna,path,rows):
         d=QDialog(self); d.setWindowTitle(f'{antenna} {axis.value} Scan'); v=QVBoxLayout(d); v.addWidget(lbl(f'{antenna} {axis.value} scan saved to {path.name}'))
         v.addWidget(ScanPlotWidget(axis,rows,d))
