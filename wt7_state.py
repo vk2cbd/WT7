@@ -1,4 +1,4 @@
-"""GUI-facing state model for WT6.
+"""GUI-facing state model for WT7.
 
 This module deliberately contains no Tkinter or hardware I/O. It gives the
 controller code a single place to publish what the GUI should display, which is

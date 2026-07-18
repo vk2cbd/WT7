@@ -1,6 +1,6 @@
 import unittest
 
-from wt6_state import AppStateStore, AntennaRunState, PowerRunState, SystemRunState, antenna_state_from_text
+from wt7_state import AppStateStore, AntennaRunState, PowerRunState, SystemRunState, antenna_state_from_text
 
 
 class AppStateStoreTests(unittest.TestCase):

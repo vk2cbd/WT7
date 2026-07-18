@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""RTL-SDR power-meter primitives for WT6."""
+"""RTL-SDR power-meter primitives for WT7."""
 
 from __future__ import annotations
 

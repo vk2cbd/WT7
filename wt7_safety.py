@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
-"""Safety primitives for WT6 antenna control.
+"""Safety primitives for WT7 antenna control.
 
-The concrete drive guard logic currently lives in :mod:`wt6_antenna` so the
+The concrete drive guard logic currently lives in :mod:`wt7_antenna` so the
 hardware-facing code and the safety checks remain synchronized. This module is
-the public safety facade for new WT6 work.
+the public safety facade for new WT7 work.
 """
 
 from __future__ import annotations
 
-from wt6_antenna import (
+from wt7_antenna import (
     Axis,
     Direction,
     Position,

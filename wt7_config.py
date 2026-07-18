@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Configuration helpers for WT6."""
+"""Configuration helpers for WT7."""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Union
 
-from wt6_antenna import AntennaConfig, Calibration, SafetyLimits
+from wt7_antenna import AntennaConfig, Calibration, SafetyLimits
 
 
 @dataclass

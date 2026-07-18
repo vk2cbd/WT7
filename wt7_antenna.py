@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-WT6 hardware driver and safety model.
+WT7 hardware driver and safety model.
 
 This file contains the decoded WinTrak Arduino protocol plus calibration and
 software-limit helpers used by the GUI.

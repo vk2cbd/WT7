@@ -1,5 +1,5 @@
 ﻿#!/usr/bin/env python3
-"""B210 dual-channel power-meter primitives for WT6."""
+"""B210 dual-channel power-meter primitives for WT7."""
 
 from __future__ import annotations
 

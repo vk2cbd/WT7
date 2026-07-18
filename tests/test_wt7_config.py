@@ -2,7 +2,7 @@ from pathlib import Path
 import tempfile
 import unittest
 
-from wt6_config import (
+from wt7_config import (
     B210Calibration,
     ScanConfig,
     YFactorConfig,
@@ -28,7 +28,7 @@ class ConfigEncodingTests(unittest.TestCase):
             "port = /dev/ttyUSB0\n"
         )
         with tempfile.TemporaryDirectory() as tmp:
-            path = Path(tmp) / "wt6_ubuntu.ini"
+            path = Path(tmp) / "wt7_ubuntu.ini"
             path.write_text(content, encoding="utf-8-sig")
             site = load_site_config(path)
             configs = load_configs(path)
@@ -38,14 +38,14 @@ class ConfigEncodingTests(unittest.TestCase):
 
     def test_scan_direction_defaults_high_to_low(self):
         with tempfile.TemporaryDirectory() as tmp:
-            path = Path(tmp) / "wt6_ubuntu.ini"
+            path = Path(tmp) / "wt7_ubuntu.ini"
             path.write_text("[scan]\nantenna_name = East\n", encoding="utf-8")
             scan = load_scan_config(path)
         self.assertTrue(scan.az_scan_high_to_low)
 
     def test_scan_direction_save_round_trip(self):
         with tempfile.TemporaryDirectory() as tmp:
-            path = Path(tmp) / "wt6_ubuntu.ini"
+            path = Path(tmp) / "wt7_ubuntu.ini"
             save_scan_config(
                 path,
                 ScanConfig(
@@ -64,14 +64,14 @@ class ConfigEncodingTests(unittest.TestCase):
 
     def test_yfactor_workflow_defaults_to_alternate(self):
         with tempfile.TemporaryDirectory() as tmp:
-            path = Path(tmp) / "wt6_ubuntu.ini"
+            path = Path(tmp) / "wt7_ubuntu.ini"
             path.write_text("[yfactor]\nantenna_name = East\n", encoding="utf-8")
             yfactor = load_yfactor_config(path)
         self.assertTrue(yfactor.alternate_order)
 
     def test_yfactor_workflow_save_round_trip(self):
         with tempfile.TemporaryDirectory() as tmp:
-            path = Path(tmp) / "wt6_ubuntu.ini"
+            path = Path(tmp) / "wt7_ubuntu.ini"
             save_yfactor_config(
                 path,
                 YFactorConfig(
@@ -89,7 +89,7 @@ class ConfigEncodingTests(unittest.TestCase):
 
     def test_b210_calibration_save_load_is_per_channel(self):
         with tempfile.TemporaryDirectory() as tmp:
-            path = Path(tmp) / "wt6_ubuntu.ini"
+            path = Path(tmp) / "wt7_ubuntu.ini"
             save_b210_calibration(
                 path,
                 B210Calibration(1_150_000_000, 512_000, 512_000, "55", "55", "A", {-40: -17.0, -50: -27.0}),

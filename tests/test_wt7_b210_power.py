@@ -1,6 +1,6 @@
 import unittest
 
-from wt6_b210_power import (
+from wt7_b210_power import (
     B210PowerMeterConfig,
     activate_b210_stream_with_timed_start,
     normalize_clock_source,
@@ -41,7 +41,7 @@ class B210PowerConfigTests(unittest.TestCase):
 
 class B210PowerPanelRoutingTests(unittest.TestCase):
     def test_default_west_antenna_uses_channel_b(self):
-        from wt6_ubuntu_gui import PowerMeterPanel
+        from wt7_ubuntu_gui import PowerMeterPanel
 
         panel = PowerMeterPanel.__new__(PowerMeterPanel)
         self.assertEqual(panel.power_channel_for_antenna("East"), "A")
@@ -49,8 +49,8 @@ class B210PowerPanelRoutingTests(unittest.TestCase):
         self.assertEqual(panel.power_channel_for_antenna(""), "A")
 
     def test_channel_mapping_can_be_changed_in_config(self):
-        from wt6_config import PowerConfig
-        from wt6_ubuntu_gui import PowerMeterPanel
+        from wt7_config import PowerConfig
+        from wt7_ubuntu_gui import PowerMeterPanel
 
         class DummyApp:
             power_config = PowerConfig(east_channel="B", west_channel="A")
@@ -61,8 +61,8 @@ class B210PowerPanelRoutingTests(unittest.TestCase):
         self.assertEqual(panel.power_channel_for_antenna("West"), "A")
 
     def test_west_measurement_uses_channel_b_calibration(self):
-        from wt6_config import B210Calibration, PowerConfig
-        from wt6_ubuntu_gui import PowerMeterPanel
+        from wt7_config import B210Calibration, PowerConfig
+        from wt7_ubuntu_gui import PowerMeterPanel
 
         class DummyApp:
             power_config = PowerConfig()
@@ -82,7 +82,7 @@ class B210PowerPanelRoutingTests(unittest.TestCase):
         self.assertAlmostEqual(measurement["power_value"], -50.0)
 
     def test_power_log_header_labels_both_channels(self):
-        from wt6_ubuntu_gui import PowerMeterPanel
+        from wt7_ubuntu_gui import PowerMeterPanel
 
         class DummyApp:
             panels = {}

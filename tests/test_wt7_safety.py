@@ -1,6 +1,6 @@
 import unittest
 
-from wt6_antenna import Direction, SafetyError, SafetyLimits
+from wt7_antenna import Direction, SafetyError, SafetyLimits
 
 
 class SafetyLimitTests(unittest.TestCase):
