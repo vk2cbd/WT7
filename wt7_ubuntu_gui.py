@@ -274,7 +274,7 @@ class SourcesDialog(SimpleDialog):
     def __init__(self,app):
         super().__init__(app,'Sources'); self.table=QTableWidget(0,6); self.table.setHorizontalHeaderLabels(['Name','RA h','Dec deg','Current AZ','Current EL','Flux 4800 MHz']); self.main.addWidget(self.table)
         for src in app.sources.values(): self.add_row(src)
-        row=QHBoxLayout(); self.selected=QComboBox(); self.refresh_selected_items(); self.selected.setCurrentText(app.selected_source_name); select=btn('Select Source'); add=btn('Add Row'); delete=btn('Delete Row'); select.clicked.connect(self.select_source); add.clicked.connect(self.add_new_source); delete.clicked.connect(self.delete_row); row.addWidget(lbl('Selected')); row.addWidget(self.selected); row.addWidget(select); row.addWidget(add); row.addWidget(delete); row.addStretch(1); self.main.addLayout(row); self.resize(820,420); self.buttons()
+        row=QHBoxLayout(); self.selected=QComboBox(); self.refresh_selected_items(); self.selected.setCurrentText(app.selected_source_name); add=btn('Add Row'); delete=btn('Delete Row'); add.clicked.connect(self.add_new_source); delete.clicked.connect(self.delete_row); row.addWidget(lbl('Selected')); row.addWidget(self.selected); row.addWidget(add); row.addWidget(delete); row.addStretch(1); self.main.addLayout(row); self.resize(760,420); self.buttons()
         self.table.itemChanged.connect(self.on_item_changed); self.table.itemSelectionChanged.connect(self.on_table_selection_changed); self.timer=QTimer(self); self.timer.timeout.connect(self.update_current_positions); self.timer.start(1000); self.update_current_positions()
     def readonly_item(self,value='--'):
         item=QTableWidgetItem(str(value)); item.setFlags(item.flags() & ~Qt.ItemIsEditable); return item
@@ -339,7 +339,7 @@ class CalibrationDialog(SimpleDialog):
             rows=[('Raw AZ',lbl(raw_az)),('Raw EL',lbl(raw_el)),('AZ offset',az),('EL offset',el)]
             for r,(label,w) in enumerate(rows): g.addWidget(lbl(label),r,0); g.addWidget(w,r,1)
             self.tabs.addTab(page,name)
-        self.status=lbl('', 'faultTag'); self.main.addWidget(self.status)
+        self.status=lbl(''); self.main.addWidget(self.status)
         row=QHBoxLayout(); manual=btn('Calibrate Manual'); target=btn('Calibrate From Target'); apply=btn('Apply Offsets'); close=btn('Close')
         manual.clicked.connect(lambda:self.set_status('Edit offsets directly, then press Apply Offsets.'))
         target.clicked.connect(self.calibrate_from_target); apply.clicked.connect(self.apply_offsets); close.clicked.connect(self.reject)
@@ -434,7 +434,7 @@ class PeakCalibrationDialog(SimpleDialog):
         g.addWidget(lbl('Source'),0,0); g.addWidget(self.source,0,1); g.addWidget(lbl('Antenna'),1,0); g.addWidget(self.antenna,1,1)
         self.target_label=lbl('Target --'); self.antenna_label=lbl('Antenna --'); self.raw_label=lbl('Raw --'); self.offset_label=lbl('Offsets --')
         for r,w in enumerate([self.target_label,self.antenna_label,self.raw_label,self.offset_label],2): g.addWidget(w,r,0,1,2)
-        self.status=lbl('Peak Cal workflow controls are visible; live PyQt execution is pending.','faultTag'); self.main.addWidget(self.status)
+        self.status=lbl('Select source and antenna, then choose tracking, jog, or lock calibration.'); self.main.addWidget(self.status)
         axis=Panel(); ag=QGridLayout(axis); ag.addWidget(lbl('Axis Tracking'),0,0,1,3); az=btn('Track AZ Only'); el=btn('Track EL Only'); stop=btn('Stop Tracking'); az.clicked.connect(lambda:self.app.start_peak_axis_tracking(self,Axis.AZIMUTH,self.source.currentText(),self.antenna.currentText())); el.clicked.connect(lambda:self.app.start_peak_axis_tracking(self,Axis.ELEVATION,self.source.currentText(),self.antenna.currentText())); stop.clicked.connect(lambda:(self.app.stop_peak_tracking(), self.set_status('Peak tracking stopped.')))
         ag.addWidget(az,1,0); ag.addWidget(el,1,1); ag.addWidget(stop,1,2); self.main.addWidget(axis)
         jog=Panel(); jg=QGridLayout(jog); jg.addWidget(lbl('Manual Peak Jog'),0,0,1,3)
@@ -447,9 +447,11 @@ class PeakCalibrationDialog(SimpleDialog):
             jg.addWidget(b,row,col)
         self.main.addWidget(jog)
         locks=Panel(); lg=QGridLayout(locks); lg.addWidget(lbl('Calibration Lock'),0,0,1,2); laz=btn('LOCK AZ CAL'); lel=btn('LOCK EL CAL'); laz.clicked.connect(lambda:self.app.lock_peak_axis(self,Axis.AZIMUTH,self.source.currentText(),self.antenna.currentText())); lel.clicked.connect(lambda:self.app.lock_peak_axis(self,Axis.ELEVATION,self.source.currentText(),self.antenna.currentText())); lg.addWidget(laz,1,0); lg.addWidget(lel,1,1); self.main.addWidget(locks)
-        row=QHBoxLayout(); row.addStretch(1); close=btn('Close'); close.clicked.connect(self.reject); row.addWidget(close); self.main.addLayout(row); self.refresh_labels()
+        row=QHBoxLayout(); row.addStretch(1); close=btn('Close'); close.clicked.connect(self.reject); row.addWidget(close); self.main.addLayout(row); self.source.currentTextChanged.connect(lambda _text:self.refresh_labels()); self.antenna.currentTextChanged.connect(lambda _text:self.refresh_labels()); self.timer=QTimer(self); self.timer.timeout.connect(self.refresh_labels); self.timer.start(1000); self.refresh_labels()
     def refresh_labels(self):
-        target=self.app.current_target; name=self.antenna.currentText(); pos=self.app.positions.get(name); cfg=self.app.configs.get(name)
+        try: target=self.app.yfactor_hot_target(self.source.currentText())
+        except Exception: target=None
+        name=self.antenna.currentText(); pos=self.app.positions.get(name); cfg=self.app.configs.get(name)
         self.target_label.setText('Target --' if not target else f'{target.name} AZ {target.azimuth:0.2f} EL {target.elevation:0.2f}')
         self.antenna_label.setText('Antenna --' if not pos else f'Antenna AZ {pos.azimuth:0.2f} EL {pos.elevation:0.2f}')
         self.raw_label.setText('Raw --' if not pos else f'Raw AZ {pos.raw_azimuth:0.2f} EL {pos.raw_elevation:0.2f}')
