@@ -77,7 +77,7 @@ class B210Panel(Panel):
         self.gain_a=edit(power.gain_db,40); self.gain_b=edit(power.gain_b_db,40); self.freq=edit(f'{power.center_frequency_hz/1_000_000:0.1f}',72); self.rate=edit(f'{power.sample_rate_hz/1000:0.0f}',64); self.bw=edit(f'{power.measurement_bandwidth_hz/1000:0.0f}',64); self.clock=edit(power.clock_source or 'internal',78); self.avg=edit(power.smoothing_samples,40); self.gui_hz=edit(f'{power.update_rate_hz:0.0f}',40)
         def add_channel(row,name,value,unit,gain):
             row.addWidget(bold(name)); row.addWidget(value); row.addWidget(unit); row.addWidget(lbl('Gain','muted')); row.addWidget(gain); row.addWidget(lbl('dB'))
-        top.addWidget(bold('B210')); top.addWidget(self.status); add_channel(top,'CH A',self.a_val,self.a_unit,self.gain_a); add_channel(top,'CH B',self.b_val,self.b_unit,self.gain_b); top.addStretch(1)
+        top.addWidget(bold('B210')); add_channel(top,'CH A',self.a_val,self.a_unit,self.gain_a); add_channel(top,'CH B',self.b_val,self.b_unit,self.gain_b); top.addStretch(1); top.addWidget(self.status,0,Qt.AlignRight)
         for text,widget in [('Freq MHz',self.freq),('Rate ksps',self.rate),('BW kHz',self.bw),('Clock',self.clock),('Avg',self.avg),('GUI Hz',self.gui_hz)]:
             params_row.addWidget(lbl(text)); params_row.addWidget(widget)
         params_row.addStretch(1)
