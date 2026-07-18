@@ -37,18 +37,22 @@ class Panel(QFrame):
 class AntennaCard(Panel):
     jog_pressed=pyqtSignal(str,str); jog_released=pyqtSignal(str); stop_clicked=pyqtSignal(str)
     def __init__(self,name):
-        super().__init__(); self.name=name; self.setMinimumHeight(144); outer=QVBoxLayout(self); outer.setContentsMargins(9,8,9,8)
-        head=QHBoxLayout(); head.addWidget(bold(name.upper())); head.addStretch(1); self.state=lbl('DISCONNECTED','stateStopped'); head.addWidget(self.state); outer.addLayout(head)
-        g=QGridLayout(); g.setHorizontalSpacing(12); g.setVerticalSpacing(4)
-        self.az=bold('--',20); self.el=bold('--',20); self.az_err=lbl('--'); self.el_err=lbl('--'); self.limits=lbl('SAFE','safe'); self.mode=lbl('--'); self.target=lbl('--')
-        for r,axis,val,errlab,err in [(0,'AZ',self.az,'AZ err',self.az_err),(1,'EL',self.el,'EL err',self.el_err)]:
-            g.addWidget(lbl(axis,'muted'),r,0); g.addWidget(val,r,1); g.addWidget(lbl(errlab,'muted'),r,2); g.addWidget(err,r,3)
-        g.addWidget(lbl('Limits','muted'),0,4); g.addWidget(self.limits,0,5); g.addWidget(lbl('Mode','muted'),1,4); g.addWidget(self.mode,1,5); g.addWidget(lbl('Target','muted'),2,2); g.addWidget(self.target,2,3,1,3)
-        c=QWidget(); cg=QGridLayout(c); cg.setHorizontalSpacing(6); cg.setVerticalSpacing(6)
+        super().__init__(); self.name=name; self.setMinimumHeight(126); self.setMaximumHeight(138)
+        g=QGridLayout(self); g.setContentsMargins(10,8,10,8); g.setHorizontalSpacing(10); g.setVerticalSpacing(5)
+        title=bold(name.upper()); title.setMinimumWidth(72); self.state=lbl('DISCONNECTED','stateStopped')
+        self.az=bold('--',18); self.el=bold('--',18); self.az.setMinimumWidth(78); self.el.setMinimumWidth(78)
+        self.az_err=lbl('--'); self.el_err=lbl('--'); self.az_err.setMinimumWidth(58); self.el_err.setMinimumWidth(58)
+        self.limits=lbl('SAFE','safe'); self.limits.setMinimumWidth(72); self.mode=lbl('--'); self.mode.setMinimumWidth(70); self.target=lbl('--'); self.target.setMinimumWidth(130)
+        g.addWidget(title,0,0,1,2); g.addWidget(self.state,0,8,1,2,Qt.AlignRight)
+        g.addWidget(lbl('AZ','muted'),1,0); g.addWidget(self.az,1,1); g.addWidget(lbl('AZ err','muted'),1,2); g.addWidget(self.az_err,1,3); g.addWidget(lbl('Limits','muted'),1,4); g.addWidget(self.limits,1,5)
+        g.addWidget(lbl('EL','muted'),2,0); g.addWidget(self.el,2,1); g.addWidget(lbl('EL err','muted'),2,2); g.addWidget(self.el_err,2,3); g.addWidget(lbl('Mode','muted'),2,4); g.addWidget(self.mode,2,5)
+        g.addWidget(lbl('Target','muted'),3,2); g.addWidget(self.target,3,3,1,3)
+        c=QWidget(); c.setObjectName('manualPad'); cg=QGridLayout(c); cg.setContentsMargins(0,0,0,0); cg.setHorizontalSpacing(6); cg.setVerticalSpacing(6)
         for text,direction,row,col in [('EL+',Direction.EL_UP.value,0,1),('AZ-',Direction.AZ_CCW.value,1,0),('AZ+',Direction.AZ_CW.value,1,2),('EL-',Direction.EL_DOWN.value,2,1)]:
-            b=btn(text); b.pressed.connect(lambda d=direction: self.jog_pressed.emit(self.name,d)); b.released.connect(lambda: self.jog_released.emit(self.name)); cg.addWidget(b,row,col)
-        stop=btn('STOP'); stop.clicked.connect(lambda: self.stop_clicked.emit(self.name)); cg.addWidget(stop,1,1)
-        g.addWidget(c,0,6,3,1,Qt.AlignRight|Qt.AlignVCenter); g.setColumnMinimumWidth(1,88); g.setColumnMinimumWidth(3,64); g.setColumnMinimumWidth(5,76); g.setColumnStretch(6,1); outer.addLayout(g)
+            b=btn(text); b.setFixedSize(64,30); b.pressed.connect(lambda d=direction: self.jog_pressed.emit(self.name,d)); b.released.connect(lambda: self.jog_released.emit(self.name)); cg.addWidget(b,row,col)
+        stop=btn('STOP'); stop.setFixedSize(64,30); stop.clicked.connect(lambda: self.stop_clicked.emit(self.name)); cg.addWidget(stop,1,1)
+        g.addWidget(c,1,7,3,3,Qt.AlignRight|Qt.AlignVCenter)
+        g.setColumnMinimumWidth(6,14); g.setColumnStretch(6,1)
     def set_position(self,pos: Optional[Position]):
         self.az.setText('--' if pos is None else f'{pos.azimuth:0.2f}'); self.el.setText('--' if pos is None else f'{pos.elevation:0.2f}')
     def set_target(self,target: Optional[TargetPosition], pos: Optional[Position]):
@@ -63,16 +67,21 @@ class AntennaCard(Panel):
 class B210Panel(Panel):
     start_clicked=pyqtSignal(); stop_clicked=pyqtSignal(); log_start_clicked=pyqtSignal(); log_stop_clicked=pyqtSignal(); cal_clicked=pyqtSignal()
     def __init__(self,power:PowerConfig):
-        super().__init__(); self.power=power; g=QGridLayout(self); g.setContentsMargins(9,8,9,8); g.setHorizontalSpacing(10); g.setVerticalSpacing(5)
-        self.status=lbl('SDR RELEASED'); self.a_val=bold('--.- dBFS',14); self.b_val=bold('--.- dBFS',14); self.a_stats=lbl('Avg -- Min -- Max --'); self.b_stats=lbl('Avg -- Min -- Max --')
-        self.gain_a=edit(power.gain_db); self.gain_b=edit(power.gain_b_db); self.freq=edit(f'{power.center_frequency_hz/1_000_000:0.1f}'); self.rate=edit(f'{power.sample_rate_hz/1000:0.0f}'); self.bw=edit(f'{power.measurement_bandwidth_hz/1000:0.0f}'); self.clock=edit(power.clock_source or 'internal'); self.avg=edit(power.smoothing_samples); self.gui_hz=edit(f'{power.update_rate_hz:0.0f}')
-        g.addWidget(bold('B210'),0,0); g.addWidget(self.status,1,0); g.addWidget(bold('CH A'),0,1); g.addWidget(self.a_val,0,2); g.addWidget(bold('CH B'),0,4); g.addWidget(self.b_val,0,5)
-        g.addWidget(lbl('Gain','muted'),1,1); g.addWidget(self.gain_a,1,2); g.addWidget(self.a_stats,2,1,1,2); g.addWidget(lbl('Gain','muted'),1,4); g.addWidget(self.gain_b,1,5); g.addWidget(self.b_stats,2,4,1,2)
-        for i,(k,w) in enumerate([('Freq MHz',self.freq),('Rate ksps',self.rate),('BW kHz',self.bw),('Clock',self.clock)]): g.addWidget(lbl(k),4,i*2+1); g.addWidget(w,4,i*2+2)
-        g.addWidget(lbl('Avg'),5,1); g.addWidget(self.avg,5,2); g.addWidget(lbl('GUI Hz'),5,3); g.addWidget(self.gui_hz,5,4)
-        for col,(text,sig,name) in enumerate([('SDR Power On',self.start_clicked,'primary'),('Release SDR',self.stop_clicked,''),('Cal',self.cal_clicked,''),('Start Log',self.log_start_clicked,''),('Stop Log',self.log_stop_clicked,'')], start=5):
-            b=btn(text,name); b.clicked.connect(sig.emit); g.addWidget(b,5 if col<8 else 6,col if col<8 else col-3)
-        g.addWidget(lbl('WT7 owns B210 while SDR power is on','muted'),6,1,1,4); self.a_hist=[]; self.b_hist=[]
+        super().__init__(); self.power=power; self.setMinimumHeight(142); self.setMaximumHeight(160)
+        g=QGridLayout(self); g.setContentsMargins(10,8,10,8); g.setHorizontalSpacing(10); g.setVerticalSpacing(5)
+        self.status=lbl('SDR RELEASED'); self.status.setMinimumWidth(170)
+        self.a_val=bold('--.- dBFS',14); self.b_val=bold('--.- dBFS',14); self.a_stats=lbl('Avg -- Min -- Max --'); self.b_stats=lbl('Avg -- Min -- Max --')
+        self.gain_a=edit(power.gain_db,58); self.gain_b=edit(power.gain_b_db,58); self.freq=edit(f'{power.center_frequency_hz/1_000_000:0.1f}',72); self.rate=edit(f'{power.sample_rate_hz/1000:0.0f}',64); self.bw=edit(f'{power.measurement_bandwidth_hz/1000:0.0f}',64); self.clock=edit(power.clock_source or 'internal',78); self.avg=edit(power.smoothing_samples,54); self.gui_hz=edit(f'{power.update_rate_hz:0.0f}',54)
+        g.addWidget(bold('B210'),0,0); g.addWidget(self.status,1,0,2,1,Qt.AlignTop)
+        g.addWidget(bold('CH A'),0,1); g.addWidget(self.a_val,0,2); g.addWidget(lbl('Gain','muted'),1,1); g.addWidget(self.gain_a,1,2); g.addWidget(self.a_stats,2,1,1,2)
+        g.addWidget(bold('CH B'),0,4); g.addWidget(self.b_val,0,5); g.addWidget(lbl('Gain','muted'),1,4); g.addWidget(self.gain_b,1,5); g.addWidget(self.b_stats,2,4,1,2)
+        params=[('Freq MHz',self.freq),('Rate ksps',self.rate),('BW kHz',self.bw),('Clock',self.clock),('Avg',self.avg),('GUI Hz',self.gui_hz)]
+        for i,(k,w) in enumerate(params): g.addWidget(lbl(k),3,i*2); g.addWidget(w,3,i*2+1)
+        actions=[('SDR Power On',self.start_clicked,'primary'),('Release SDR',self.stop_clicked,''),('Cal',self.cal_clicked,''),('Start Log',self.log_start_clicked,''),('Stop Log',self.log_stop_clicked,'')]
+        for i,(text,sig,name) in enumerate(actions):
+            b=btn(text,name); b.clicked.connect(sig.emit); g.addWidget(b,4,i+1)
+        g.addWidget(lbl('WT7 owns B210 while SDR power is on','muted'),4,6,1,6)
+        g.setColumnStretch(3,1); g.setColumnStretch(6,1); g.setColumnStretch(12,1); self.a_hist=[]; self.b_hist=[]
     def meter_config(self):
         return B210PowerMeterConfig(center_frequency_hz=int(float(self.freq.text())*1_000_000), sample_rate_hz=int(float(self.rate.text())*1000), measurement_bandwidth_hz=int(float(self.bw.text())*1000), update_rate_hz=float(self.gui_hz.text()), gain_a_db=float(self.gain_a.text()), gain_b_db=float(self.gain_b.text()), clock_source=self.clock.text().strip() or 'internal', device_args=self.power.b210_device_args)
     def save_config(self):
@@ -100,31 +109,53 @@ class B210Panel(Panel):
         return {'power_value': value, 'power_dbfs': float(dbfs), 'power_unit': unit, 'power_channel': channel, 'power_calibrated': calibrated, 'power_extrapolated': extrapolated, 'sample_count': 1}
     def log_header(self) -> list[str]:
         return ['utc_time','ch_a_dbfs','ch_a_value','ch_a_unit','ch_a_calibrated','ch_b_dbfs','ch_b_value','ch_b_unit','ch_b_calibrated']
+
 PowerMeterPanel = B210Panel
+
 class WT7App(QWidget):
     def __init__(self,config_path):
         super().__init__(); self.config_path=Path(config_path); self.configs=load_configs(self.config_path); self.site=load_site_config(self.config_path); self.power_config=load_power_config(self.config_path); self.sources=load_sources(self.config_path); self.selected_source_name=self.site.selected_source if self.site.selected_source in self.sources else next(iter(self.sources), '')
         self.event_log=EventLogger(Path('logs'),self.site.log_retention_days,self.site.log_level); self.state_store=AppStateStore(); self.sessions={}; self.positions={}; self.cards={}; self.current_target=None; self.tracking_kind=''; self.tracking_stop=threading.Event(); self.jog_stops={}; self.b210_stop=threading.Event(); self.b210_thread=None; self.events=queue.Queue(); self.log_handle=None; self.log_writer=None
-        self.setWindowTitle(f'WT7 ANTENNA CONTROLLER {APP_VERSION}'); self.resize(790,920); self.build_ui(); self.style_ui(); self.set_status('Load config, connect antennas, then use guarded jogs.'); self.event_log.info('APP_START',version=APP_VERSION,config=str(config_path))
+        self.setWindowTitle(f'WT7 ANTENNA CONTROLLER {APP_VERSION}'); self.resize(1240,760); self.setMinimumSize(1120,680); self.build_ui(); self.style_ui(); self.set_status('Load config, connect antennas, then use guarded jogs.'); self.event_log.info('APP_START',version=APP_VERSION,config=str(config_path))
         self.t_ref=QTimer(self); self.t_ref.timeout.connect(self.update_reference); self.t_ref.start(1000); self.t_evt=QTimer(self); self.t_evt.timeout.connect(self.process_events); self.t_evt.start(100); self.t_pos=QTimer(self); self.t_pos.timeout.connect(self.poll_positions); self.t_pos.start(1000)
     def build_ui(self):
-        main=QVBoxLayout(self); main.setContentsMargins(26,12,26,12); main.setSpacing(8)
-        row=QHBoxLayout(); row.addWidget(lbl('WT7 ANTENNA CONTROLLER','appTitle')); row.addWidget(lbl('READY','readyTag')); row.addWidget(lbl('PyQt5 alpha','muted')); row.addStretch(1); main.addLayout(row)
-        quick=QHBoxLayout();
-        for text,name,cb in [('Connect','primary',self.connect_all),('Disconnect','',self.disconnect_all),('Track','',lambda:self.start_tracking('source')),('Park','',self.park_all),('STOP ALL','danger',self.stop_all)]: b=btn(text,name); b.clicked.connect(cb); quick.addWidget(b)
-        quick.addStretch(1); main.addLayout(quick)
-        menu=Panel(); mg=QGridLayout(menu); mg.setContentsMargins(9,8,9,8); mg.setHorizontalSpacing(7); mg.setVerticalSpacing(7)
-        for i,text in enumerate(['Limits','Observer','Sources','Encoders','Tracking','Calibration','Peak Cal','Scan Cal','Y Factor','Power','Event Log']): b=btn(text); b.clicked.connect(self.not_ported if text!='Event Log' else self.open_log_hint); mg.addWidget(b,i//9,i%9)
-        main.addWidget(menu)
-        src=Panel(); sr=QHBoxLayout(src); sr.setContentsMargins(8,8,8,8); sr.addWidget(bold('SOURCE')); self.source_name=lbl('Target --'); sr.addWidget(self.source_name); sr.addStretch(1); sr.addWidget(lbl('AZ','muted')); self.source_az=bold('--',14); sr.addWidget(self.source_az); sr.addStretch(1); sr.addWidget(lbl('EL','muted')); self.source_el=bold('--',14); sr.addWidget(self.source_el); sr.addStretch(1); sr.addWidget(lbl('HA','muted')); self.source_ha=bold('--',14); sr.addWidget(self.source_ha); main.addWidget(src)
-        ref=Panel(); rg=QGridLayout(ref); rg.setContentsMargins(8,8,8,8); self.lmst=lbl('LMST --'); self.utc=lbl('UTC --'); self.local=lbl('Local --'); self.sun=bold('SUN AZ -- EL --'); self.moon=bold('MOON AZ -- EL --'); rg.addWidget(self.lmst,0,0); rg.addWidget(self.utc,0,1); rg.addWidget(self.local,0,2); rg.addWidget(self.sun,1,0); rg.addWidget(self.moon,1,1); main.addWidget(ref)
+        main=QVBoxLayout(self); main.setContentsMargins(18,10,18,10); main.setSpacing(8)
+        top1=QHBoxLayout(); top1.setSpacing(7)
+        row1=[('Connect','primary',self.connect_all),('Disconnect','',self.disconnect_all),('Limits','',self.not_ported),('Observer','',self.not_ported),('Tracking','',self.not_ported),('Sources','',self.not_ported),('Calibration','',self.not_ported),('Peak Cal','',self.not_ported),('Scan Cal','',self.not_ported),('Y Factor','',self.not_ported),('Encoders','',self.not_ported),('STOP ALL','danger',self.stop_all)]
+        for text,name,cb in row1:
+            b=btn(text,name); b.clicked.connect(cb); top1.addWidget(b)
+        top1.addStretch(1); main.addLayout(top1)
+        top2=QHBoxLayout(); top2.setSpacing(7)
+        row2=[('Track Sun','',lambda:self.start_tracking('sun')),('Track Moon','',lambda:self.start_tracking('moon')),('Track Source','',lambda:self.start_tracking('source')),('Stop Track','',self.stop_tracking),('Park','',self.park_all)]
+        for text,name,cb in row2:
+            b=btn(text,name); b.clicked.connect(cb); top2.addWidget(b)
+        top2.addStretch(1); main.addLayout(top2)
+        header=QHBoxLayout(); header.setSpacing(8)
+        src=Panel(); sr=QHBoxLayout(src); sr.setContentsMargins(8,8,8,8); sr.addWidget(bold('SOURCE')); self.source_name=lbl('Target --'); sr.addWidget(self.source_name); sr.addStretch(1); sr.addWidget(lbl('AZ','muted')); self.source_az=bold('--',14); sr.addWidget(self.source_az); sr.addStretch(1); sr.addWidget(lbl('EL','muted')); self.source_el=bold('--',14); sr.addWidget(self.source_el); sr.addStretch(1); sr.addWidget(lbl('HA','muted')); self.source_ha=bold('--',14); sr.addWidget(self.source_ha)
+        ref=Panel(); rg=QGridLayout(ref); rg.setContentsMargins(8,7,8,7); rg.setHorizontalSpacing(18); self.lmst=lbl('LMST --'); self.utc=lbl('UTC --'); self.local=lbl('Local --'); self.sun=bold('SUN AZ -- EL --'); self.moon=bold('MOON AZ -- EL --'); rg.addWidget(self.lmst,0,0); rg.addWidget(self.utc,0,1); rg.addWidget(self.local,0,2); rg.addWidget(self.sun,1,0); rg.addWidget(self.moon,1,1)
+        header.addWidget(src,2); header.addWidget(ref,3); main.addLayout(header)
         self.status=lbl(''); main.addWidget(self.status)
         for name in self.configs:
             card=AntennaCard(name); card.jog_pressed.connect(self.start_jog); card.jog_released.connect(self.stop_jog); card.stop_clicked.connect(self.stop_antenna); self.cards[name]=card; main.addWidget(card)
-        self.power=B210Panel(self.power_config); self.power.start_clicked.connect(self.start_b210); self.power.stop_clicked.connect(self.stop_b210); self.power.cal_clicked.connect(lambda:self.info('B210 calibration dialog will be ported after main PyQt5 shell validation.')); self.power.log_start_clicked.connect(self.start_b210_log); self.power.log_stop_clicked.connect(self.stop_b210_log); main.addWidget(self.power)
-        ev=Panel(); eg=QGridLayout(ev); eg.setContentsMargins(9,8,9,8); eg.addWidget(bold('RECENT EVENTS'),0,0); ob=btn('Open Log'); ob.clicked.connect(self.open_log_hint); eg.addWidget(ob,0,3,Qt.AlignRight); self.ev1=lbl('--'); self.ev2=lbl('--','muted'); eg.addWidget(self.ev1,1,0,1,4); eg.addWidget(self.ev2,2,0,1,4); main.addWidget(ev); main.addStretch(1)
+        self.power=B210Panel(self.power_config); self.power.app=self; self.power.start_clicked.connect(self.start_b210); self.power.stop_clicked.connect(self.stop_b210); self.power.cal_clicked.connect(lambda:self.info('B210 calibration dialog will be ported after main PyQt5 shell validation.')); self.power.log_start_clicked.connect(self.start_b210_log); self.power.log_stop_clicked.connect(self.stop_b210_log); main.addWidget(self.power)
+        ev=Panel(); ev.setMinimumHeight(82); eg=QGridLayout(ev); eg.setContentsMargins(9,8,9,8); eg.addWidget(bold('RECENT EVENTS'),0,0); ob=btn('Open Log'); ob.clicked.connect(self.open_log_hint); eg.addWidget(ob,0,3,Qt.AlignRight); self.ev1=lbl('--'); self.ev2=lbl('--','muted'); eg.addWidget(self.ev1,1,0,1,4); eg.addWidget(self.ev2,2,0,1,4); main.addWidget(ev); main.addStretch(1)
     def style_ui(self):
-        self.setStyleSheet("""QWidget{background:#f6f6f5;color:#1f252b;font-family:Arial,Helvetica,sans-serif;font-size:10pt} QLabel#appTitle{font-weight:700} QLabel#muted{color:#8a8f95} QLabel#bold{font-weight:700} QFrame#panel{background:#f1f1f0;border:1px solid #dddddc} QPushButton{background:#fff;border:1px solid #d6d8da;border-radius:9px;padding:4px 9px;min-height:18px} QPushButton#primary{background:#121820;color:white;border-color:#121820} QPushButton#danger{color:#e74b2c;border-color:#e74b2c} QLineEdit{background:white;border:1px solid #d8dadd;border-radius:8px;padding:4px 8px} QLabel#readyTag,QLabel#stateGood{background:#ead7c9;border:1px solid #dcc2ae;padding:5px 8px} QLabel#stateBusy{background:#d9e7f8;border:1px solid #bed3ed;padding:5px 8px} QLabel#stateStopped{background:#eee;border:1px solid #d2d2d2;padding:5px 8px} QLabel#stateFault,QLabel#faultTag{background:#ffd9d9;color:#b00000;border:1px solid #e3a2a2;padding:5px 8px} QLabel#safe{background:#ead7c9;border:1px solid #dcc2ae;padding:5px 8px}""")
+        self.setStyleSheet("""
+            QWidget{background:#f6f6f5;color:#1f252b;font-family:Arial,Helvetica,sans-serif;font-size:10pt}
+            QLabel{background:transparent;border:none;color:#1f252b}
+            QLabel#muted{color:#8a8f95}
+            QLabel#bold{font-weight:700}
+            QFrame#panel{background:#f1f1f0;border:1px solid #d7d7d5}
+            QPushButton{background:#fff;color:#111820;border:1px solid #cfd3d6;border-radius:8px;padding:4px 10px;min-height:20px;min-width:62px}
+            QPushButton#primary{background:#121820;color:white;border-color:#121820}
+            QPushButton#danger{color:#e74b2c;border-color:#e74b2c}
+            QLineEdit{background:white;color:#111820;border:1px solid #d8dadd;border-radius:8px;padding:3px 7px}
+            QLabel#stateGood{background:#ead7c9;border:1px solid #dcc2ae;padding:5px 8px}
+            QLabel#stateBusy{background:#d9e7f8;border:1px solid #bed3ed;padding:5px 8px}
+            QLabel#stateStopped{background:#eeeeed;border:1px solid #d2d2d2;padding:5px 8px}
+            QLabel#stateFault,QLabel#faultTag{background:#ffd9d9;color:#b00000;border:1px solid #e3a2a2;padding:5px 8px}
+            QLabel#safe{background:#ead7c9;border:1px solid #dcc2ae;padding:5px 8px}
+        """)
     def emit(self,fn,arg=None): self.events.put((fn,arg))
     def process_events(self):
         while True:
@@ -163,6 +194,11 @@ class WT7App(QWidget):
         self.run_thread(worker,'Disconnect')
     def finish_disconnect(self,name):
         self.positions.pop(name,None); self.cards[name].set_position(None); self.cards[name].set_target(None,None); self.cards[name].set_state('DISCONNECTED'); self.set_status(f'{name} disconnected.')
+    def stop_tracking(self):
+        self.tracking_stop.set()
+        for n in self.sessions:
+            if n in self.cards: self.cards[n].set_state('STOPPED')
+        self.set_status('Tracking stopped.')
     def stop_all(self):
         self.tracking_stop.set(); [ev.set() for ev in self.jog_stops.values()]
         for n,s in list(self.sessions.items()): self.run_thread(lambda s=s:s.stop_all(),f'Stop{n}'); self.cards[n].set_state('STOPPED')
