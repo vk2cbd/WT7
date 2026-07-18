@@ -51,8 +51,8 @@ class AntennaCard(Panel):
         for text,direction,row,col in [('EL+',Direction.EL_UP.value,0,1),('AZ-',Direction.AZ_CCW.value,1,0),('AZ+',Direction.AZ_CW.value,1,2),('EL-',Direction.EL_DOWN.value,2,1)]:
             b=btn(text); b.setFixedSize(64,30); b.pressed.connect(lambda d=direction: self.jog_pressed.emit(self.name,d)); b.released.connect(lambda: self.jog_released.emit(self.name)); cg.addWidget(b,row,col)
         stop=btn('STOP'); stop.setFixedSize(64,30); stop.clicked.connect(lambda: self.stop_clicked.emit(self.name)); cg.addWidget(stop,1,1)
-        g.addWidget(c,1,7,3,3,Qt.AlignRight|Qt.AlignVCenter)
-        g.setColumnMinimumWidth(6,14); g.setColumnStretch(6,1)
+        g.addWidget(c,1,6,3,3,Qt.AlignLeft|Qt.AlignVCenter)
+        g.setColumnMinimumWidth(6,6); g.setColumnStretch(9,1)
     def set_position(self,pos: Optional[Position]):
         self.az.setText('--' if pos is None else f'{pos.azimuth:0.2f}'); self.el.setText('--' if pos is None else f'{pos.elevation:0.2f}')
     def set_target(self,target: Optional[TargetPosition], pos: Optional[Position]):
@@ -70,11 +70,11 @@ class B210Panel(Panel):
         super().__init__(); self.power=power; self.setMinimumHeight(142); self.setMaximumHeight(160)
         g=QGridLayout(self); g.setContentsMargins(10,8,10,8); g.setHorizontalSpacing(10); g.setVerticalSpacing(5)
         self.status=lbl('SDR RELEASED'); self.status.setMinimumWidth(170)
-        self.a_val=bold('--.- dBFS',14); self.b_val=bold('--.- dBFS',14); self.a_stats=lbl('Avg -- Min -- Max --'); self.b_stats=lbl('Avg -- Min -- Max --')
-        self.gain_a=edit(power.gain_db,58); self.gain_b=edit(power.gain_b_db,58); self.freq=edit(f'{power.center_frequency_hz/1_000_000:0.1f}',72); self.rate=edit(f'{power.sample_rate_hz/1000:0.0f}',64); self.bw=edit(f'{power.measurement_bandwidth_hz/1000:0.0f}',64); self.clock=edit(power.clock_source or 'internal',78); self.avg=edit(power.smoothing_samples,54); self.gui_hz=edit(f'{power.update_rate_hz:0.0f}',54)
+        self.a_val=bold('--.-',14); self.b_val=bold('--.-',14); self.a_unit=bold('dBFS'); self.b_unit=bold('dBFS')
+        self.gain_a=edit(power.gain_db,40); self.gain_b=edit(power.gain_b_db,40); self.freq=edit(f'{power.center_frequency_hz/1_000_000:0.1f}',72); self.rate=edit(f'{power.sample_rate_hz/1000:0.0f}',64); self.bw=edit(f'{power.measurement_bandwidth_hz/1000:0.0f}',64); self.clock=edit(power.clock_source or 'internal',78); self.avg=edit(power.smoothing_samples,54); self.gui_hz=edit(f'{power.update_rate_hz:0.0f}',54)
         g.addWidget(bold('B210'),0,0); g.addWidget(self.status,1,0,2,1,Qt.AlignTop)
-        g.addWidget(bold('CH A'),0,1); g.addWidget(self.a_val,0,2); g.addWidget(lbl('Gain','muted'),1,1); g.addWidget(self.gain_a,1,2); g.addWidget(self.a_stats,2,1,1,2)
-        g.addWidget(bold('CH B'),0,4); g.addWidget(self.b_val,0,5); g.addWidget(lbl('Gain','muted'),1,4); g.addWidget(self.gain_b,1,5); g.addWidget(self.b_stats,2,4,1,2)
+        g.addWidget(bold('CH A'),0,1); g.addWidget(self.a_val,0,2); g.addWidget(self.a_unit,0,3); g.addWidget(lbl('Gain','muted'),1,1); g.addWidget(self.gain_a,1,2); g.addWidget(lbl('dB'),1,3)
+        g.addWidget(bold('CH B'),0,7); g.addWidget(self.b_val,0,8); g.addWidget(self.b_unit,0,9); g.addWidget(lbl('Gain','muted'),1,7); g.addWidget(self.gain_b,1,8); g.addWidget(lbl('dB'),1,9)
         params=[('Freq MHz',self.freq),('Rate ksps',self.rate),('BW kHz',self.bw),('Clock',self.clock),('Avg',self.avg),('GUI Hz',self.gui_hz)]
         for i,(k,w) in enumerate(params): g.addWidget(lbl(k),3,i*2); g.addWidget(w,3,i*2+1)
         actions=[('SDR Power On',self.start_clicked,'primary'),('Release SDR',self.stop_clicked,''),('Cal',self.cal_clicked,''),('Start Log',self.log_start_clicked,''),('Stop Log',self.log_stop_clicked,'')]
@@ -89,7 +89,7 @@ class B210Panel(Panel):
     def set_reading(self,r:B210PowerReading):
         keep=max(1,int(float(self.avg.text() or '1'))); self.a_hist=(self.a_hist+[r.power_a_dbfs])[-keep:]; self.b_hist=(self.b_hist+[r.power_b_dbfs])[-keep:]; aa=sum(self.a_hist)/len(self.a_hist); bb=sum(self.b_hist)/len(self.b_hist)
         self.latest_power_dbfs=aa; self.latest_power_b_dbfs=bb; self.active_calibrations=getattr(self,'active_calibrations',{})
-        self.a_val.setText(f'{aa:0.1f} dBFS'); self.b_val.setText(f'{bb:0.1f} dBFS'); self.a_stats.setText(f'Avg {aa:0.1f} Min {min(self.a_hist):0.1f} Max {max(self.a_hist):0.1f}'); self.b_stats.setText(f'Avg {bb:0.1f} Min {min(self.b_hist):0.1f} Max {max(self.b_hist):0.1f}')
+        self.a_val.setText(f'{aa:0.1f}'); self.b_val.setText(f'{bb:0.1f}')
     def power_channel_for_antenna(self, antenna_name: str) -> str:
         attrs = object.__getattribute__(self, '__dict__')
         app = attrs.get('app')
