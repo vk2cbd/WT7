@@ -114,7 +114,7 @@ class SimpleDialog(QDialog):
     def __init__(self, app, title):
         super().__init__(app); self.app=app; self.setWindowTitle(title); self.main=QVBoxLayout(self); self.main.setContentsMargins(12,12,12,12); self.main.setSpacing(8)
     def buttons(self):
-        box=QDialogButtonBox(QDialogButtonBox.Save|QDialogButtonBox.Cancel); box.accepted.connect(self.accept); box.rejected.connect(self.reject); self.main.addWidget(box); return box
+        box=QDialogButtonBox(QDialogButtonBox.Ok|QDialogButtonBox.Cancel); box.accepted.connect(self.accept); box.rejected.connect(self.reject); self.main.addWidget(box); return box
     def edit(self, value, width=90):
         w=edit(value,width); return w
     def to_float(self, widget, name):
@@ -198,19 +198,31 @@ class SourcesDialog(SimpleDialog):
 
 class CalibrationDialog(SimpleDialog):
     def __init__(self,app):
-        super().__init__(app,'Calibration'); tabs=QTabWidget(); self.main.addWidget(tabs); self.fields={}
+        super().__init__(app,'Calibration'); self.tabs=QTabWidget(); self.main.addWidget(self.tabs); self.fields={}
         for name,cfg in app.configs.items():
             page=QWidget(); g=QGridLayout(page); p=app.positions.get(name); raw_az='--' if not p else f'{p.raw_azimuth:0.2f}'; raw_el='--' if not p else f'{p.raw_elevation:0.2f}'
             az=self.edit(cfg.calibration.az_offset); el=self.edit(cfg.calibration.el_offset); self.fields[name]=(az,el)
-            for r,(label,w) in enumerate([('Raw AZ',lbl(raw_az)),('Raw EL',lbl(raw_el)),('AZ offset',az),('EL offset',el)]): g.addWidget(lbl(label),r,0); g.addWidget(w,r,1)
-            tabs.addTab(page,name)
-        self.buttons()
-    def accept(self):
+            rows=[('Raw AZ',lbl(raw_az)),('Raw EL',lbl(raw_el)),('AZ offset',az),('EL offset',el)]
+            for r,(label,w) in enumerate(rows): g.addWidget(lbl(label),r,0); g.addWidget(w,r,1)
+            self.tabs.addTab(page,name)
+        self.status=lbl('', 'faultTag'); self.main.addWidget(self.status)
+        row=QHBoxLayout(); manual=btn('Calibrate Manual'); target=btn('Calibrate From Target'); apply=btn('Apply Offsets'); close=btn('Close')
+        manual.clicked.connect(lambda:self.set_status('Edit offsets directly, then press Apply Offsets.'))
+        target.clicked.connect(self.calibrate_from_target); apply.clicked.connect(self.apply_offsets); close.clicked.connect(self.reject)
+        for b in [manual,target,apply]: row.addWidget(b)
+        row.addStretch(1); row.addWidget(close); self.main.addLayout(row)
+    def current_name(self): return self.tabs.tabText(self.tabs.currentIndex())
+    def set_status(self,text): self.status.setText(text)
+    def calibrate_from_target(self):
+        name=self.current_name(); pos=self.app.positions.get(name); target=self.app.current_target
+        if not pos or not target: self.set_status('Current antenna position and target are required.'); return
+        az_off=(target.azimuth-pos.raw_azimuth+540.0)%360.0-180.0; el_off=target.elevation-pos.raw_elevation
+        az,el=self.fields[name]; az.setText(f'{az_off:0.6f}'); el.setText(f'{el_off:0.6f}'); self.apply_offsets()
+    def apply_offsets(self):
         try:
             for name,(az,el) in self.fields.items(): self.app.configs[name].calibration.az_offset=self.to_float(az,'AZ offset'); self.app.configs[name].calibration.el_offset=self.to_float(el,'EL offset')
-            save_configs(self.app.config_path,self.app.configs); self.app.set_status('Calibration offsets saved.'); super().accept()
+            save_configs(self.app.config_path,self.app.configs); self.app.set_status('Calibration offsets saved.'); self.set_status('Calibration offsets saved.')
         except Exception as exc: self.fail(exc)
-
 class PowerSettingsDialog(SimpleDialog):
     def __init__(self,app):
         super().__init__(app,'Power'); g=QGridLayout(); self.main.addLayout(g); p=app.power_config; self.fields={}
@@ -226,29 +238,84 @@ class PowerSettingsDialog(SimpleDialog):
 class ScanSettingsDialog(SimpleDialog):
     def __init__(self,app):
         super().__init__(app,'Scan Cal'); g=QGridLayout(); self.main.addLayout(g); s=load_scan_config(app.config_path); self.fields={}; self.antenna=QComboBox(); self.antenna.addItems(list(app.configs.keys())); self.antenna.setCurrentText(s.antenna_name); self.high_to_low=QCheckBox('AZ scan high to low'); self.high_to_low.setChecked(s.az_scan_high_to_low)
-        specs=[('span_degrees','Span deg',s.span_degrees),('increment_degrees','Increment deg',s.increment_degrees),('dwell_seconds','Dwell sec',s.dwell_seconds),('scan_count','Scans',s.scan_count)]
+        specs=[('span_degrees','Span +/- deg',s.span_degrees),('increment_degrees','Increment deg',s.increment_degrees),('dwell_seconds','Dwell sec',s.dwell_seconds),('scan_count','Scans',s.scan_count)]
         g.addWidget(lbl('Antenna'),0,0); g.addWidget(self.antenna,0,1)
         for r,(key,label,value) in enumerate(specs,1): self.fields[key]=self.edit(value); g.addWidget(lbl(label),r,0); g.addWidget(self.fields[key],r,1)
-        g.addWidget(self.high_to_low,5,0,1,2); self.buttons()
-    def accept(self):
+        g.addWidget(self.high_to_low,5,0,1,2); self.status=lbl('Track a source and start B210 power before scanning.','faultTag'); self.main.addWidget(self.status)
+        row=QHBoxLayout(); az=btn('AZ Scan'); el=btn('EL Scan'); stop=btn('Stop Scan'); close=btn('Close')
+        az.clicked.connect(lambda:self.start_scan(Axis.AZIMUTH)); el.clicked.connect(lambda:self.start_scan(Axis.ELEVATION)); stop.clicked.connect(self.stop_scan); close.clicked.connect(self.reject)
+        for b in [az,el,stop]: row.addWidget(b)
+        row.addStretch(1); row.addWidget(close); self.main.addLayout(row)
+    def scan_config(self):
+        return ScanConfig(self.to_float(self.fields['span_degrees'],'Span'),self.to_float(self.fields['increment_degrees'],'Increment'),self.to_float(self.fields['dwell_seconds'],'Dwell'),self.to_int(self.fields['scan_count'],'Scans'),self.antenna.currentText(),self.high_to_low.isChecked())
+    def start_scan(self,axis):
         try:
-            cfg=ScanConfig(self.to_float(self.fields['span_degrees'],'Span'),self.to_float(self.fields['increment_degrees'],'Increment'),self.to_float(self.fields['dwell_seconds'],'Dwell'),self.to_int(self.fields['scan_count'],'Scans'),self.antenna.currentText(),self.high_to_low.isChecked())
-            save_scan_config(self.app.config_path,cfg); self.app.set_status('Scan settings saved. Scan execution remains in legacy GUI during PyQt transition.'); super().accept()
-        except Exception as exc: self.fail(exc)
-
+            cfg=self.scan_config(); save_scan_config(self.app.config_path,cfg)
+            starter=getattr(self.app,'start_calibration_scan',None)
+            if callable(starter): starter(axis,cfg,self)
+            else: self.set_status('Scan execution is not yet ported to PyQt5; parameters saved.')
+        except Exception as exc: self.set_status(str(exc))
+    def stop_scan(self):
+        stopper=getattr(self.app,'stop_scan',None)
+        if callable(stopper): stopper()
+        else: self.set_status('No PyQt scan worker is running.')
+    def set_status(self,text): self.status.setText(text)
 class YFactorSettingsDialog(SimpleDialog):
     def __init__(self,app):
-        super().__init__(app,'Y Factor'); g=QGridLayout(); self.main.addLayout(g); y=load_yfactor_config(app.config_path); self.antenna=QComboBox(); self.antenna.addItems(list(app.configs.keys())); self.antenna.setCurrentText(y.antenna_name); self.hot=QComboBox(); self.hot.addItems(['Sun','Moon','Source']); self.hot.setCurrentText(y.hot_target); self.cold=QComboBox(); self.cold.addItems(['Sun AZ / EL 80','Moon AZ / EL 80','AZ / EL','RA / Dec']); self.cold.setCurrentText(y.cold_mode); self.alt=QCheckBox('Alternate order H-C, C-H'); self.alt.setChecked(y.alternate_order); self.fields={}
-        specs=[('cold_az','Cold AZ',y.cold_az),('cold_el','Cold EL',y.cold_el),('cold_ra','Cold RA h',y.cold_ra),('cold_dec','Cold Dec',y.cold_dec),('count','Measurements',y.count),('dwell_seconds','Dwell sec',y.dwell_seconds)]
-        for r,(label,w) in enumerate([('Antenna',self.antenna),('Hot target',self.hot),('Cold sky',self.cold)]): g.addWidget(lbl(label),r,0); g.addWidget(w,r,1)
+        super().__init__(app,'Y Factor'); g=QGridLayout(); self.main.addLayout(g); y=load_yfactor_config(app.config_path)
+        self.hot=QComboBox(); self.hot.addItems(['Sun','Moon','Source']); self.hot.setCurrentText(y.hot_target)
+        self.antenna=QComboBox(); self.antenna.addItems(list(app.configs.keys())); self.antenna.setCurrentText(y.antenna_name)
+        self.cold=QComboBox(); self.cold.addItems(['Sun AZ / EL 80','Moon AZ / EL 80','AZ/EL','RA/Dec']); self.cold.setCurrentText(y.cold_mode)
+        self.workflow=QComboBox(); self.workflow.addItems(['Alternate H/C','Repeat H/C']); self.workflow.setCurrentText('Alternate H/C' if y.alternate_order else 'Repeat H/C')
+        self.fields={}; specs=[('cold_az','Cold AZ',y.cold_az),('cold_el','Cold EL',y.cold_el),('cold_ra','Cold RA h',y.cold_ra),('cold_dec','Cold Dec',y.cold_dec),('count','Measurements',y.count),('dwell_seconds','Dwell sec',y.dwell_seconds)]
+        for r,(label,w) in enumerate([('Hot target',self.hot),('Antenna',self.antenna),('Cold sky',self.cold)]): g.addWidget(lbl(label),r,0); g.addWidget(w,r,1)
         for r,(key,label,value) in enumerate(specs,3): self.fields[key]=self.edit(value); g.addWidget(lbl(label),r,0); g.addWidget(self.fields[key],r,1)
-        g.addWidget(self.alt,9,0,1,2); self.buttons()
-    def accept(self):
+        g.addWidget(lbl('Workflow'),9,0); g.addWidget(self.workflow,9,1); self.status=lbl('Start B210 power before measuring.','faultTag'); self.main.addWidget(self.status)
+        row=QHBoxLayout(); start=btn('Start'); stop=btn('Stop'); close=btn('Close'); start.clicked.connect(self.start_measurement); stop.clicked.connect(self.stop_measurement); close.clicked.connect(self.reject)
+        row.addWidget(start); row.addWidget(stop); row.addStretch(1); row.addWidget(close); self.main.addLayout(row)
+        self.hot.currentTextChanged.connect(self.on_hot_target_changed); self.on_hot_target_changed()
+    def on_hot_target_changed(self):
+        if self.cold.currentText() not in ['Sun AZ / EL 80','Moon AZ / EL 80']: return
+        if self.hot.currentText() == 'Sun': self.cold.setCurrentText('Sun AZ / EL 80')
+        elif self.hot.currentText() == 'Moon': self.cold.setCurrentText('Moon AZ / EL 80')
+    def yfactor_config(self):
+        return YFactorConfig(self.antenna.currentText(),self.hot.currentText(),self.cold.currentText(),self.to_float(self.fields['cold_az'],'Cold AZ'),self.to_float(self.fields['cold_el'],'Cold EL'),self.to_float(self.fields['cold_ra'],'Cold RA'),self.to_float(self.fields['cold_dec'],'Cold Dec'),self.to_int(self.fields['count'],'Measurements'),self.to_float(self.fields['dwell_seconds'],'Dwell'),self.workflow.currentText()=='Alternate H/C')
+    def start_measurement(self):
         try:
-            cfg=YFactorConfig(self.antenna.currentText(),self.hot.currentText(),self.cold.currentText(),self.to_float(self.fields['cold_az'],'Cold AZ'),self.to_float(self.fields['cold_el'],'Cold EL'),self.to_float(self.fields['cold_ra'],'Cold RA'),self.to_float(self.fields['cold_dec'],'Cold Dec'),self.to_int(self.fields['count'],'Measurements'),self.to_float(self.fields['dwell_seconds'],'Dwell'),self.alt.isChecked())
-            save_yfactor_config(self.app.config_path,cfg); self.app.set_status('Y Factor settings saved. Measurement execution remains in legacy GUI during PyQt transition.'); super().accept()
-        except Exception as exc: self.fail(exc)
-
+            cfg=self.yfactor_config(); save_yfactor_config(self.app.config_path,cfg)
+            starter=getattr(self.app,'start_yfactor',None)
+            if callable(starter): starter(self,cfg.antenna_name,cfg.hot_target,cfg.cold_mode,cfg.cold_az,cfg.cold_el,cfg.cold_ra,cfg.cold_dec,cfg.count,cfg.dwell_seconds,cfg.alternate_order)
+            else: self.set_status('Y Factor execution is not yet ported to PyQt5; parameters saved.')
+        except Exception as exc: self.set_status(str(exc))
+    def stop_measurement(self):
+        stopper=getattr(self.app,'stop_yfactor',None)
+        if callable(stopper): stopper()
+        else: self.set_status('No PyQt Y Factor worker is running.')
+    def set_status(self,text): self.status.setText(text)
+class PeakCalibrationDialog(SimpleDialog):
+    def __init__(self,app):
+        super().__init__(app,'Peak Calibration'); g=QGridLayout(); self.main.addLayout(g)
+        self.source=QComboBox(); self.source.addItems(['Sun','Moon','Source']); current=(app.current_target.name if app.current_target else 'Source'); self.source.setCurrentText(current if current in ['Sun','Moon'] else 'Source')
+        self.antenna=QComboBox(); self.antenna.addItems(list(app.configs.keys()))
+        g.addWidget(lbl('Source'),0,0); g.addWidget(self.source,0,1); g.addWidget(lbl('Antenna'),1,0); g.addWidget(self.antenna,1,1)
+        self.target_label=lbl('Target --'); self.antenna_label=lbl('Antenna --'); self.raw_label=lbl('Raw --'); self.offset_label=lbl('Offsets --')
+        for r,w in enumerate([self.target_label,self.antenna_label,self.raw_label,self.offset_label],2): g.addWidget(w,r,0,1,2)
+        self.status=lbl('Peak Cal workflow controls are visible; live PyQt execution is pending.','faultTag'); self.main.addWidget(self.status)
+        axis=Panel(); ag=QGridLayout(axis); ag.addWidget(lbl('Axis Tracking'),0,0,1,3); az=btn('Track AZ Only'); el=btn('Track EL Only'); stop=btn('Stop Tracking'); az.clicked.connect(lambda:self.set_status('Track AZ Only is not yet ported to PyQt5.')); el.clicked.connect(lambda:self.set_status('Track EL Only is not yet ported to PyQt5.')); stop.clicked.connect(lambda:self.set_status('Peak tracking stopped.'))
+        ag.addWidget(az,1,0); ag.addWidget(el,1,1); ag.addWidget(stop,1,2); self.main.addWidget(axis)
+        jog=Panel(); jg=QGridLayout(jog); jg.addWidget(lbl('Manual Peak Jog'),0,0,1,3)
+        for text,row,col in [('EL+',1,1),('AZ-',2,0),('STOP',2,1),('AZ+',2,2),('EL-',3,1)]:
+            b=btn(text); b.clicked.connect(lambda _=False,t=text:self.set_status(f'{t} peak jog is not yet ported to PyQt5.')); jg.addWidget(b,row,col)
+        self.main.addWidget(jog)
+        locks=Panel(); lg=QGridLayout(locks); lg.addWidget(lbl('Calibration Lock'),0,0,1,2); laz=btn('LOCK AZ CAL'); lel=btn('LOCK EL CAL'); laz.clicked.connect(lambda:self.set_status('LOCK AZ CAL is not yet ported to PyQt5.')); lel.clicked.connect(lambda:self.set_status('LOCK EL CAL is not yet ported to PyQt5.')); lg.addWidget(laz,1,0); lg.addWidget(lel,1,1); self.main.addWidget(locks)
+        row=QHBoxLayout(); row.addStretch(1); close=btn('Close'); close.clicked.connect(self.reject); row.addWidget(close); self.main.addLayout(row); self.refresh_labels()
+    def refresh_labels(self):
+        target=self.app.current_target; name=self.antenna.currentText(); pos=self.app.positions.get(name); cfg=self.app.configs.get(name)
+        self.target_label.setText('Target --' if not target else f'{target.name} AZ {target.azimuth:0.2f} EL {target.elevation:0.2f}')
+        self.antenna_label.setText('Antenna --' if not pos else f'Antenna AZ {pos.azimuth:0.2f} EL {pos.elevation:0.2f}')
+        self.raw_label.setText('Raw --' if not pos else f'Raw AZ {pos.raw_azimuth:0.2f} EL {pos.raw_elevation:0.2f}')
+        self.offset_label.setText('Offsets --' if not cfg else f'Offsets AZ {cfg.calibration.az_offset:+0.2f} EL {cfg.calibration.el_offset:+0.2f}')
+    def set_status(self,text): self.status.setText(text)
 class EncodersDialog(SimpleDialog):
     def __init__(self,app):
         super().__init__(app,'Encoders'); self.table=QTableWidget(0,8); self.table.setHorizontalHeaderLabels(['Antenna','Axis','Type','Model','Version','Serial','Resolution','Position']); self.main.addWidget(self.table); scan=btn('Scan'); scan.clicked.connect(self.scan); self.main.addWidget(scan); close=QDialogButtonBox(QDialogButtonBox.Close); close.rejected.connect(self.reject); self.main.addWidget(close); self.resize(720,320)
@@ -330,8 +397,7 @@ class WT7App(QWidget):
     def open_yfactor_dialog(self): YFactorSettingsDialog(self).exec_()
     def open_encoders_dialog(self): EncodersDialog(self).exec_()
     def open_power_dialog(self): PowerSettingsDialog(self).exec_()
-    def open_peak_calibration(self):
-        self.info('Peak Calibration is not yet ported to PyQt5 because it controls live axis-tracking workflow. Use wt7_tk_legacy_gui.py for Peak Cal until the workflow is ported completely.')
+    def open_peak_calibration(self): PeakCalibrationDialog(self).exec_()
     def run_thread(self,fn,name='WT7Worker'): threading.Thread(target=fn,name=name,daemon=True).start()
     def connect_all(self):
         pending=[(n,c) for n,c in self.configs.items() if n not in self.sessions]
