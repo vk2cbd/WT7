@@ -8,11 +8,11 @@ from pathlib import Path
 from typing import Optional
 from PyQt5.QtCore import Qt, QSize, QTimer, pyqtSignal
 from PyQt5.QtGui import QFont
-from PyQt5.QtWidgets import QApplication, QFrame, QGridLayout, QHBoxLayout, QLabel, QLineEdit, QMessageBox, QPushButton, QVBoxLayout, QWidget
-from wt7_antenna import Direction, Position, SafeAntenna, shortest_angle_delta
+from PyQt5.QtWidgets import QApplication, QCheckBox, QComboBox, QDialog, QDialogButtonBox, QFrame, QGridLayout, QHBoxLayout, QLabel, QLineEdit, QMessageBox, QPushButton, QTabWidget, QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget
+from wt7_antenna import Axis, Direction, Position, SafeAntenna, shortest_angle_delta
 from wt7_astro import TargetPosition, local_sidereal_time, moon_equatorial, moon_position, source_position
 from wt7_b210_power import B210PowerMeter, B210PowerMeterConfig, B210PowerReading
-from wt7_config import PowerConfig, calibrated_dbm_from_dbfs, load_configs, load_power_config, load_site_config, load_sources, save_power_config
+from wt7_config import PowerConfig, ScanConfig, SourceConfig, YFactorConfig, calibrated_dbm_from_dbfs, load_configs, load_power_config, load_scan_config, load_site_config, load_sources, load_yfactor_config, save_configs, save_power_config, save_scan_config, save_site_config, save_sources, save_yfactor_config
 from wt7_logging import EventLogger
 from wt7_solar import sun_equatorial, sun_position
 from wt7_state import AppStateStore, SystemRunState
@@ -110,6 +110,158 @@ class B210Panel(Panel):
     def log_header(self) -> list[str]:
         return ['utc_time','ch_a_dbfs','ch_a_value','ch_a_unit','ch_a_calibrated','ch_b_dbfs','ch_b_value','ch_b_unit','ch_b_calibrated']
 
+class SimpleDialog(QDialog):
+    def __init__(self, app, title):
+        super().__init__(app); self.app=app; self.setWindowTitle(title); self.main=QVBoxLayout(self); self.main.setContentsMargins(12,12,12,12); self.main.setSpacing(8)
+    def buttons(self):
+        box=QDialogButtonBox(QDialogButtonBox.Save|QDialogButtonBox.Cancel); box.accepted.connect(self.accept); box.rejected.connect(self.reject); self.main.addWidget(box); return box
+    def edit(self, value, width=90):
+        w=edit(value,width); return w
+    def to_float(self, widget, name):
+        try: return float(widget.text())
+        except ValueError: raise ValueError(f'{name} must be numeric')
+    def to_int(self, widget, name):
+        try: return int(float(widget.text()))
+        except ValueError: raise ValueError(f'{name} must be numeric')
+    def fail(self, exc): QMessageBox.warning(self,self.windowTitle(),str(exc))
+
+class LimitsDialog(SimpleDialog):
+    keys=[('az_min','AZ min'),('az_max','AZ max'),('el_min','EL min'),('el_max','EL max'),('az_margin','AZ margin'),('el_margin','EL margin'),('max_jog_seconds','Max jog sec'),('poll_interval','Poll sec'),('park_az','Park AZ'),('park_el','Park EL')]
+    def __init__(self,app):
+        super().__init__(app,'Limits'); self.fields={}; tabs=QTabWidget(); self.main.addWidget(tabs)
+        for name,cfg in app.configs.items():
+            page=QWidget(); g=QGridLayout(page); g.setContentsMargins(8,8,8,8); f={}; vals={**cfg.limits.__dict__,'park_az':cfg.park_az,'park_el':cfg.park_el}
+            for r,(key,label) in enumerate(self.keys): g.addWidget(lbl(label),r,0); f[key]=self.edit(vals[key]); g.addWidget(f[key],r,1)
+            self.fields[name]=f; tabs.addTab(page,name)
+        self.buttons()
+    def accept(self):
+        try:
+            for name,f in self.fields.items():
+                cfg=self.app.configs[name]; cfg.limits.az_min=self.to_float(f['az_min'],'AZ min'); cfg.limits.az_max=self.to_float(f['az_max'],'AZ max'); cfg.limits.el_min=self.to_float(f['el_min'],'EL min'); cfg.limits.el_max=self.to_float(f['el_max'],'EL max'); cfg.limits.az_margin=self.to_float(f['az_margin'],'AZ margin'); cfg.limits.el_margin=self.to_float(f['el_margin'],'EL margin'); cfg.limits.max_jog_seconds=self.to_float(f['max_jog_seconds'],'Max jog'); cfg.limits.poll_interval=self.to_float(f['poll_interval'],'Poll sec'); cfg.park_az=self.to_float(f['park_az'],'Park AZ'); cfg.park_el=self.to_float(f['park_el'],'Park EL'); cfg.limits.assert_position_allowed(cfg.park_az,cfg.park_el)
+            save_configs(self.app.config_path,self.app.configs); self.app.set_status('Limits saved.'); super().accept()
+        except Exception as exc: self.fail(exc)
+
+class ObserverDialog(SimpleDialog):
+    def __init__(self,app):
+        super().__init__(app,'Observer'); g=QGridLayout(); self.main.addLayout(g); s=app.site
+        self.lat=self.edit(s.latitude); self.lon=self.edit(s.longitude); self.timeout_enabled=QCheckBox('Enable disconnect timeout'); self.timeout_enabled.setChecked(bool(s.timeout_enabled)); self.timeout_min=self.edit(s.timeout_minutes); self.retention=self.edit(s.log_retention_days)
+        for r,(label,w) in enumerate([('Latitude',self.lat),('Longitude',self.lon),('Timeout min',self.timeout_min),('Log retention days',self.retention)]): g.addWidget(lbl(label),r,0); g.addWidget(w,r,1)
+        g.addWidget(self.timeout_enabled,4,0,1,2); self.buttons()
+    def accept(self):
+        try:
+            self.app.site.latitude=self.to_float(self.lat,'Latitude'); self.app.site.longitude=self.to_float(self.lon,'Longitude'); self.app.site.timeout_enabled=self.timeout_enabled.isChecked(); self.app.site.timeout_minutes=self.to_float(self.timeout_min,'Timeout min'); self.app.site.log_retention_days=max(1,self.to_int(self.retention,'Log retention'))
+            save_site_config(self.app.config_path,self.app.site); self.app.set_status('Observer saved.'); self.app.update_reference(); super().accept()
+        except Exception as exc: self.fail(exc)
+
+class TrackingDialog(SimpleDialog):
+    def __init__(self,app):
+        super().__init__(app,'Tracking'); tabs=QTabWidget(); self.main.addWidget(tabs)
+        site=QWidget(); sg=QGridLayout(site); self.site_fields={}
+        specs=[('track_interval_seconds','Interval sec'),('az_track_tolerance_degrees','AZ start tol'),('el_track_tolerance_degrees','EL start tol'),('az_stop_tolerance_degrees','AZ stop tol'),('el_stop_tolerance_degrees','EL stop tol'),('az_slow_speed','AZ slow speed'),('el_slow_speed','EL slow speed'),('az_slow_threshold_degrees','AZ slow deg'),('el_slow_threshold_degrees','EL slow deg')]
+        for r,(key,label) in enumerate(specs): self.site_fields[key]=self.edit(getattr(app.site,key)); sg.addWidget(lbl(label),r,0); sg.addWidget(self.site_fields[key],r,1)
+        tabs.addTab(site,'Global'); self.ant_fields={}
+        for name,cfg in app.configs.items():
+            page=QWidget(); g=QGridLayout(page); f={}; specs=[('gui_speed','Manual speed'),('az_track_speed','AZ speed'),('el_track_speed','EL speed'),('az_low_to_high_compensation','AZ L-H comp')]
+            for r,(key,label) in enumerate(specs): f[key]=self.edit(getattr(cfg,key)); g.addWidget(lbl(label),r,0); g.addWidget(f[key],r,1)
+            self.ant_fields[name]=f; tabs.addTab(page,name)
+        self.buttons()
+    def accept(self):
+        try:
+            for key,w in self.site_fields.items(): setattr(self.app.site,key,self.to_int(w,key) if key.endswith('speed') else self.to_float(w,key))
+            for name,f in self.ant_fields.items():
+                cfg=self.app.configs[name]; cfg.gui_speed=self.to_int(f['gui_speed'],'Manual speed'); cfg.az_track_speed=self.to_int(f['az_track_speed'],'AZ speed'); cfg.el_track_speed=self.to_int(f['el_track_speed'],'EL speed'); cfg.az_low_to_high_compensation=self.to_float(f['az_low_to_high_compensation'],'AZ L-H comp')
+            save_site_config(self.app.config_path,self.app.site); save_configs(self.app.config_path,self.app.configs); self.app.set_status('Tracking settings saved.'); super().accept()
+        except Exception as exc: self.fail(exc)
+
+class SourcesDialog(SimpleDialog):
+    def __init__(self,app):
+        super().__init__(app,'Sources'); self.table=QTableWidget(0,4); self.table.setHorizontalHeaderLabels(['Name','RA h','Dec deg','Flux 4800 MHz']); self.main.addWidget(self.table)
+        for src in app.sources.values(): self.add_row(src)
+        row=QHBoxLayout(); self.selected=QComboBox(); self.selected.addItems(list(app.sources.keys())); self.selected.setCurrentText(app.selected_source_name); add=btn('Add Row'); delete=btn('Delete Row'); add.clicked.connect(lambda:self.add_row(SourceConfig('New Source',0,0,0))); delete.clicked.connect(self.delete_row); row.addWidget(lbl('Selected')); row.addWidget(self.selected); row.addWidget(add); row.addWidget(delete); row.addStretch(1); self.main.addLayout(row); self.resize(520,360); self.buttons()
+    def add_row(self,src):
+        r=self.table.rowCount(); self.table.insertRow(r)
+        for c,val in enumerate([src.name,src.ra_hours,src.dec_degrees,src.flux_4800_mhz]): self.table.setItem(r,c,QTableWidgetItem(str(val)))
+    def delete_row(self):
+        r=self.table.currentRow()
+        if r >= 0: self.table.removeRow(r)
+    def accept(self):
+        try:
+            sources={}
+            for r in range(self.table.rowCount()):
+                name=(self.table.item(r,0).text() if self.table.item(r,0) else '').strip()
+                if not name: continue
+                sources[name]=SourceConfig(name,float(self.table.item(r,1).text()),float(self.table.item(r,2).text()),float(self.table.item(r,3).text()))
+            if not sources: raise ValueError('At least one source is required')
+            selected=self.selected.currentText().strip(); selected=selected if selected in sources else next(iter(sources))
+            self.app.sources=sources; self.app.selected_source_name=selected; self.app.site.selected_source=selected; save_sources(self.app.config_path,sources,selected); self.app.set_status('Sources saved.'); super().accept()
+        except Exception as exc: self.fail(exc)
+
+class CalibrationDialog(SimpleDialog):
+    def __init__(self,app):
+        super().__init__(app,'Calibration'); tabs=QTabWidget(); self.main.addWidget(tabs); self.fields={}
+        for name,cfg in app.configs.items():
+            page=QWidget(); g=QGridLayout(page); p=app.positions.get(name); raw_az='--' if not p else f'{p.raw_azimuth:0.2f}'; raw_el='--' if not p else f'{p.raw_elevation:0.2f}'
+            az=self.edit(cfg.calibration.az_offset); el=self.edit(cfg.calibration.el_offset); self.fields[name]=(az,el)
+            for r,(label,w) in enumerate([('Raw AZ',lbl(raw_az)),('Raw EL',lbl(raw_el)),('AZ offset',az),('EL offset',el)]): g.addWidget(lbl(label),r,0); g.addWidget(w,r,1)
+            tabs.addTab(page,name)
+        self.buttons()
+    def accept(self):
+        try:
+            for name,(az,el) in self.fields.items(): self.app.configs[name].calibration.az_offset=self.to_float(az,'AZ offset'); self.app.configs[name].calibration.el_offset=self.to_float(el,'EL offset')
+            save_configs(self.app.config_path,self.app.configs); self.app.set_status('Calibration offsets saved.'); super().accept()
+        except Exception as exc: self.fail(exc)
+
+class PowerSettingsDialog(SimpleDialog):
+    def __init__(self,app):
+        super().__init__(app,'Power'); g=QGridLayout(); self.main.addLayout(g); p=app.power_config; self.fields={}
+        specs=[('center_frequency_hz','Freq MHz',p.center_frequency_hz/1_000_000),('sample_rate_hz','Rate ksps',p.sample_rate_hz/1000),('measurement_bandwidth_hz','BW kHz',p.measurement_bandwidth_hz/1000),('gain_db','Gain A',p.gain_db),('gain_b_db','Gain B',p.gain_b_db),('update_rate_hz','GUI Hz',p.update_rate_hz),('smoothing_samples','Avg',p.smoothing_samples),('clock_source','Clock',p.clock_source)]
+        for r,(key,label,value) in enumerate(specs): self.fields[key]=self.edit(value); g.addWidget(lbl(label),r,0); g.addWidget(self.fields[key],r,1)
+        self.buttons()
+    def accept(self):
+        try:
+            p=self.app.power_config; p.center_frequency_hz=int(self.to_float(self.fields['center_frequency_hz'],'Freq MHz')*1_000_000); p.sample_rate_hz=int(self.to_float(self.fields['sample_rate_hz'],'Rate ksps')*1000); p.measurement_bandwidth_hz=int(self.to_float(self.fields['measurement_bandwidth_hz'],'BW kHz')*1000); p.gain_db=self.fields['gain_db'].text(); p.gain_b_db=self.fields['gain_b_db'].text(); p.update_rate_hz=self.to_float(self.fields['update_rate_hz'],'GUI Hz'); p.smoothing_samples=self.to_int(self.fields['smoothing_samples'],'Avg'); p.clock_source=self.fields['clock_source'].text().strip() or 'internal'
+            save_power_config(self.app.config_path,p); self.app.power_config=p; self.app.power.freq.setText(f'{p.center_frequency_hz/1_000_000:0.1f}'); self.app.power.rate.setText(f'{p.sample_rate_hz/1000:0.0f}'); self.app.power.bw.setText(f'{p.measurement_bandwidth_hz/1000:0.0f}'); self.app.power.gain_a.setText(str(p.gain_db)); self.app.power.gain_b.setText(str(p.gain_b_db)); self.app.power.avg.setText(str(p.smoothing_samples)); self.app.power.gui_hz.setText(f'{p.update_rate_hz:0.0f}'); self.app.power.clock.setText(p.clock_source); self.app.set_status('Power settings saved; restart SDR power to apply.'); super().accept()
+        except Exception as exc: self.fail(exc)
+
+class ScanSettingsDialog(SimpleDialog):
+    def __init__(self,app):
+        super().__init__(app,'Scan Cal'); g=QGridLayout(); self.main.addLayout(g); s=load_scan_config(app.config_path); self.fields={}; self.antenna=QComboBox(); self.antenna.addItems(list(app.configs.keys())); self.antenna.setCurrentText(s.antenna_name); self.high_to_low=QCheckBox('AZ scan high to low'); self.high_to_low.setChecked(s.az_scan_high_to_low)
+        specs=[('span_degrees','Span deg',s.span_degrees),('increment_degrees','Increment deg',s.increment_degrees),('dwell_seconds','Dwell sec',s.dwell_seconds),('scan_count','Scans',s.scan_count)]
+        g.addWidget(lbl('Antenna'),0,0); g.addWidget(self.antenna,0,1)
+        for r,(key,label,value) in enumerate(specs,1): self.fields[key]=self.edit(value); g.addWidget(lbl(label),r,0); g.addWidget(self.fields[key],r,1)
+        g.addWidget(self.high_to_low,5,0,1,2); self.buttons()
+    def accept(self):
+        try:
+            cfg=ScanConfig(self.to_float(self.fields['span_degrees'],'Span'),self.to_float(self.fields['increment_degrees'],'Increment'),self.to_float(self.fields['dwell_seconds'],'Dwell'),self.to_int(self.fields['scan_count'],'Scans'),self.antenna.currentText(),self.high_to_low.isChecked())
+            save_scan_config(self.app.config_path,cfg); self.app.set_status('Scan settings saved. Scan execution remains in legacy GUI during PyQt transition.'); super().accept()
+        except Exception as exc: self.fail(exc)
+
+class YFactorSettingsDialog(SimpleDialog):
+    def __init__(self,app):
+        super().__init__(app,'Y Factor'); g=QGridLayout(); self.main.addLayout(g); y=load_yfactor_config(app.config_path); self.antenna=QComboBox(); self.antenna.addItems(list(app.configs.keys())); self.antenna.setCurrentText(y.antenna_name); self.hot=QComboBox(); self.hot.addItems(['Sun','Moon','Source']); self.hot.setCurrentText(y.hot_target); self.cold=QComboBox(); self.cold.addItems(['Sun AZ / EL 80','Moon AZ / EL 80','AZ / EL','RA / Dec']); self.cold.setCurrentText(y.cold_mode); self.alt=QCheckBox('Alternate order H-C, C-H'); self.alt.setChecked(y.alternate_order); self.fields={}
+        specs=[('cold_az','Cold AZ',y.cold_az),('cold_el','Cold EL',y.cold_el),('cold_ra','Cold RA h',y.cold_ra),('cold_dec','Cold Dec',y.cold_dec),('count','Measurements',y.count),('dwell_seconds','Dwell sec',y.dwell_seconds)]
+        for r,(label,w) in enumerate([('Antenna',self.antenna),('Hot target',self.hot),('Cold sky',self.cold)]): g.addWidget(lbl(label),r,0); g.addWidget(w,r,1)
+        for r,(key,label,value) in enumerate(specs,3): self.fields[key]=self.edit(value); g.addWidget(lbl(label),r,0); g.addWidget(self.fields[key],r,1)
+        g.addWidget(self.alt,9,0,1,2); self.buttons()
+    def accept(self):
+        try:
+            cfg=YFactorConfig(self.antenna.currentText(),self.hot.currentText(),self.cold.currentText(),self.to_float(self.fields['cold_az'],'Cold AZ'),self.to_float(self.fields['cold_el'],'Cold EL'),self.to_float(self.fields['cold_ra'],'Cold RA'),self.to_float(self.fields['cold_dec'],'Cold Dec'),self.to_int(self.fields['count'],'Measurements'),self.to_float(self.fields['dwell_seconds'],'Dwell'),self.alt.isChecked())
+            save_yfactor_config(self.app.config_path,cfg); self.app.set_status('Y Factor settings saved. Measurement execution remains in legacy GUI during PyQt transition.'); super().accept()
+        except Exception as exc: self.fail(exc)
+
+class EncodersDialog(SimpleDialog):
+    def __init__(self,app):
+        super().__init__(app,'Encoders'); self.table=QTableWidget(0,8); self.table.setHorizontalHeaderLabels(['Antenna','Axis','Type','Model','Version','Serial','Resolution','Position']); self.main.addWidget(self.table); scan=btn('Scan'); scan.clicked.connect(self.scan); self.main.addWidget(scan); close=QDialogButtonBox(QDialogButtonBox.Close); close.rejected.connect(self.reject); self.main.addWidget(close); self.resize(720,320)
+    def scan(self):
+        self.table.setRowCount(0)
+        if not self.app.sessions: QMessageBox.warning(self,'Encoders','Connect antennas before encoder scan.'); return
+        for name,session in self.app.sessions.items():
+            try:
+                data=session.scan_encoders()
+                for axis,info in data.items():
+                    r=self.table.rowCount(); self.table.insertRow(r); vals=[name,axis.value,info.encoder_type,info.model,info.version,info.serial,info.resolution,info.position]
+                    for c,v in enumerate(vals): self.table.setItem(r,c,QTableWidgetItem(str(v)))
+            except Exception as exc: QMessageBox.warning(self,'Encoders',f'{name}: {exc}')
 PowerMeterPanel = B210Panel
 
 class WT7App(QWidget):
@@ -121,7 +273,7 @@ class WT7App(QWidget):
     def build_ui(self):
         main=QVBoxLayout(self); main.setContentsMargins(18,10,18,10); main.setSpacing(8)
         top1=QHBoxLayout(); top1.setSpacing(7)
-        row1=[('Connect','primary',self.connect_all),('Disconnect','',self.disconnect_all),('Limits','',self.not_ported),('Observer','',self.not_ported),('Tracking','',self.not_ported),('Sources','',self.not_ported),('Calibration','',self.not_ported),('Peak Cal','',self.not_ported),('Scan Cal','',self.not_ported),('Y Factor','',self.not_ported),('Encoders','',self.not_ported),('STOP ALL','danger',self.stop_all)]
+        row1=[('Connect','primary',self.connect_all),('Disconnect','',self.disconnect_all),('Limits','',self.open_limits),('Observer','',self.open_observer),('Tracking','',self.open_tracking_dialog),('Sources','',self.open_sources_dialog),('Calibration','',self.open_calibration_dialog),('Peak Cal','',self.open_peak_calibration),('Scan Cal','',self.open_scan_dialog),('Y Factor','',self.open_yfactor_dialog),('Encoders','',self.open_encoders_dialog),('STOP ALL','danger',self.stop_all)]
         for text,name,cb in row1:
             b=btn(text,name); b.clicked.connect(cb); top1.addWidget(b)
         top1.addStretch(1); main.addLayout(top1)
@@ -137,7 +289,7 @@ class WT7App(QWidget):
         self.status=lbl(''); main.addWidget(self.status)
         for name in self.configs:
             card=AntennaCard(name); card.jog_pressed.connect(self.start_jog); card.jog_released.connect(self.stop_jog); card.stop_clicked.connect(self.stop_antenna); self.cards[name]=card; main.addWidget(card)
-        self.power=B210Panel(self.power_config); self.power.app=self; self.power.start_clicked.connect(self.start_b210); self.power.stop_clicked.connect(self.stop_b210); self.power.cal_clicked.connect(lambda:self.info('B210 calibration dialog will be ported after main PyQt5 shell validation.')); self.power.log_start_clicked.connect(self.start_b210_log); self.power.log_stop_clicked.connect(self.stop_b210_log); main.addWidget(self.power)
+        self.power=B210Panel(self.power_config); self.power.app=self; self.power.start_clicked.connect(self.start_b210); self.power.stop_clicked.connect(self.stop_b210); self.power.cal_clicked.connect(lambda:self.info('B210 calibration capture remains in wt7_tk_legacy_gui.py during the PyQt transition.')); self.power.log_start_clicked.connect(self.start_b210_log); self.power.log_stop_clicked.connect(self.stop_b210_log); main.addWidget(self.power)
         ev=Panel(); ev.setMinimumHeight(82); eg=QGridLayout(ev); eg.setContentsMargins(9,8,9,8); eg.addWidget(bold('RECENT EVENTS'),0,0); ob=btn('Open Log'); ob.clicked.connect(self.open_log_hint); eg.addWidget(ob,0,3,Qt.AlignRight); self.ev1=lbl('--'); self.ev2=lbl('--','muted'); eg.addWidget(self.ev1,1,0,1,4); eg.addWidget(self.ev2,2,0,1,4); main.addWidget(ev); main.addStretch(1)
     def style_ui(self):
         self.setStyleSheet("""
@@ -169,6 +321,17 @@ class WT7App(QWidget):
     def info(self,msg): QMessageBox.information(self,'WT7',msg)
     def not_ported(self): self.info('This WT7 PyQt5 alpha currently ports the main control surface. Secondary dialogs are still available in wt7_tk_legacy_gui.py during transition.')
     def open_log_hint(self): self.info('Event logs are in the logs directory beside the app.')
+    def open_limits(self): LimitsDialog(self).exec_()
+    def open_observer(self): ObserverDialog(self).exec_()
+    def open_tracking_dialog(self): TrackingDialog(self).exec_()
+    def open_sources_dialog(self): SourcesDialog(self).exec_()
+    def open_calibration_dialog(self): CalibrationDialog(self).exec_()
+    def open_scan_dialog(self): ScanSettingsDialog(self).exec_()
+    def open_yfactor_dialog(self): YFactorSettingsDialog(self).exec_()
+    def open_encoders_dialog(self): EncodersDialog(self).exec_()
+    def open_power_dialog(self): PowerSettingsDialog(self).exec_()
+    def open_peak_calibration(self):
+        self.info('Peak Calibration is not yet ported to PyQt5 because it controls live axis-tracking workflow. Use wt7_tk_legacy_gui.py for Peak Cal until the workflow is ported completely.')
     def run_thread(self,fn,name='WT7Worker'): threading.Thread(target=fn,name=name,daemon=True).start()
     def connect_all(self):
         pending=[(n,c) for n,c in self.configs.items() if n not in self.sessions]
