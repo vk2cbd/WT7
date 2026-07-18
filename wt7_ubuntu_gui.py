@@ -2,7 +2,7 @@
 #!/usr/bin/env python3
 """WT7 PyQt5 antenna controller GUI alpha."""
 from __future__ import annotations
-import argparse, csv, queue, threading, time
+import argparse, csv, math, queue, threading, time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
@@ -113,15 +113,20 @@ class B210Panel(Panel):
 
 class ScanPlotWidget(QWidget):
     def __init__(self, axis, rows, parent=None):
-        super().__init__(parent); self.axis=axis; self.rows=rows; self.setMinimumSize(560,340)
+        super().__init__(parent); self.axis=axis; self.rows=rows; self.summary_text='Fit --'; self.setMinimumSize(560,340)
     def paintEvent(self,event):
         painter=QPainter(self); painter.setRenderHint(QPainter.Antialiasing)
         w,h=self.width(),self.height(); left,right,top,bottom=58,w-22,22,h-48
         painter.fillRect(0,0,w,h,QColor('white'))
         points=[(float(r['offset_degrees']),float(r['power_value'])) for r in self.rows if r.get('power_value') is not None]
         if not points:
-            painter.drawText(20,40,'No scan data'); return
-        xs=[p[0] for p in points]; ys=[p[1] for p in points]; minx,maxx=min(xs),max(xs); miny,maxy=min(ys),max(ys)
+            self.summary_text='Fit unavailable: no scan data'; painter.drawText(20,40,'No scan data'); return
+        points=sorted(points); xs=[p[0] for p in points]; ys=[p[1] for p in points]
+        fit=self.fit_gaussian_with_slope(points); fit_points=[]
+        if fit:
+            for i in range(121):
+                x=min(xs)+(max(xs)-min(xs))*i/120.0; fit_points.append((x,self.evaluate_fit(fit,x)))
+        all_y=ys+[y for _x,y in fit_points]; minx,maxx=min(xs),max(xs); miny,maxy=min(all_y),max(all_y)
         if minx==maxx: minx-=1; maxx+=1
         if miny==maxy: miny-=0.5; maxy+=0.5
         pad=(maxy-miny)*0.08; miny-=pad; maxy+=pad
@@ -135,15 +140,72 @@ class ScanPlotWidget(QWidget):
         painter.setPen(QPen(QColor('#222222'),1)); painter.drawLine(left,bottom,right,bottom); painter.drawLine(left,top,left,bottom)
         if minx <= 0 <= maxx:
             pen=QPen(QColor('#555555'),1); pen.setStyle(Qt.DashLine); painter.setPen(pen); x=int(px(0)); painter.drawLine(x,top,x,bottom); painter.drawText(x+4,top+14,'boresight')
+        if fit_points:
+            painter.setPen(QPen(QColor('#d62728'),2)); last=None
+            for xval,yval in fit_points:
+                pnt=(int(px(xval)),int(py(yval)))
+                if last: painter.drawLine(last[0],last[1],pnt[0],pnt[1])
+                last=pnt
         trace=QPen(QColor('#0057b8'),2); painter.setPen(trace); last=None
         for xval,yval in points:
-            p=(int(px(xval)),int(py(yval)))
-            if last: painter.drawLine(last[0],last[1],p[0],p[1])
-            last=p
+            pnt=(int(px(xval)),int(py(yval)))
+            if last: painter.drawLine(last[0],last[1],pnt[0],pnt[1])
+            last=pnt
         painter.setBrush(QColor('#0057b8')); painter.setPen(QPen(QColor('#0057b8'),1))
         for xval,yval in points: painter.drawEllipse(int(px(xval))-3,int(py(yval))-3,6,6)
         painter.setPen(QColor('#111111')); painter.drawText((left+right)//2-55,h-12,f'{self.axis.value} offset degrees')
         unit=str(self.rows[-1].get('power_unit','dBFS')); painter.save(); painter.translate(16,(top+bottom)//2+35); painter.rotate(-90); painter.drawText(0,0,unit); painter.restore()
+        if fit:
+            fwhm=2.35482*fit['sigma']; self.summary_text=f"Boresight error {fit['center']:+0.3f} deg; FWHM {fwhm:0.3f} deg; peak {fit['peak']:0.2f} {unit}; RMS {fit['rms']:0.3f} dB"
+        else:
+            self.summary_text='Gaussian fit unavailable'
+    def fit_gaussian_with_slope(self,points):
+        if len(points)<5: return None
+        points=sorted(points); xs=[p[0] for p in points]; ys=[p[1] for p in points]; min_x,max_x=min(xs),max(xs); span=max_x-min_x
+        if span<=0.0: return None
+        peak_x=xs[ys.index(max(ys))]; sigma_min=max(span/30.0,0.02); sigma_max=max(span,sigma_min*2.0); center_start=max(min_x,peak_x-span*0.25); center_stop=min(max_x,peak_x+span*0.25); best=None
+        for center in self.fit_range(center_start,center_stop,41):
+            for sigma in self.fit_range(sigma_min,sigma_max,50):
+                fit=self.solve_linear_fit(points,center,sigma)
+                if fit and fit['amplitude']>0.0 and (best is None or fit['sse']<best['sse']): best=fit
+        if not best: return None
+        for center_width,sigma_factor in ((span*0.08,0.35),(span*0.03,0.18)):
+            center_start=max(min_x,best['center']-center_width); center_stop=min(max_x,best['center']+center_width); sigma_start=max(sigma_min,best['sigma']*(1.0-sigma_factor)); sigma_stop=min(sigma_max,best['sigma']*(1.0+sigma_factor))
+            for center in self.fit_range(center_start,center_stop,41):
+                for sigma in self.fit_range(sigma_start,sigma_stop,41):
+                    fit=self.solve_linear_fit(points,center,sigma)
+                    if fit and fit['amplitude']>0.0 and fit['sse']<best['sse']: best=fit
+        best['rms']=math.sqrt(best['sse']/len(points)); best['peak']=self.evaluate_fit(best,best['center']); return best
+    def fit_range(self,start,stop,count):
+        if count<=1 or start==stop: return [start]
+        return [start+(stop-start)*i/(count-1) for i in range(count)]
+    def solve_linear_fit(self,points,center,sigma):
+        normal=[[0.0 for _ in range(3)] for _ in range(3)]; rhs=[0.0,0.0,0.0]
+        for x,y in points:
+            g=math.exp(-0.5*((x-center)/sigma)**2); vals=(1.0,x,g)
+            for i in range(3):
+                rhs[i]+=vals[i]*y
+                for j in range(3): normal[i][j]+=vals[i]*vals[j]
+        solution=self.solve_3x3(normal,rhs)
+        if solution is None: return None
+        baseline,slope,amplitude=solution; sse=0.0
+        for x,y in points:
+            predicted=baseline+slope*x+amplitude*math.exp(-0.5*((x-center)/sigma)**2); sse+=(y-predicted)**2
+        return {'baseline':baseline,'slope':slope,'amplitude':amplitude,'center':center,'sigma':sigma,'sse':sse}
+    def solve_3x3(self,matrix,rhs):
+        a=[matrix[row][:]+[rhs[row]] for row in range(3)]
+        for col in range(3):
+            pivot=max(range(col,3),key=lambda row: abs(a[row][col]))
+            if abs(a[pivot][col])<1e-12: return None
+            a[col],a[pivot]=a[pivot],a[col]; pv=a[col][col]
+            for item in range(col,4): a[col][item]/=pv
+            for row in range(3):
+                if row==col: continue
+                factor=a[row][col]
+                for item in range(col,4): a[row][item]-=factor*a[col][item]
+        return [a[row][3] for row in range(3)]
+    def evaluate_fit(self,fit,x):
+        return fit['baseline']+fit['slope']*x+fit['amplitude']*math.exp(-0.5*((x-fit['center'])/fit['sigma'])**2)
 class SimpleDialog(QDialog):
     def __init__(self, app, title):
         super().__init__(app); self.app=app; self.setWindowTitle(title); self.main=QVBoxLayout(self); self.main.setContentsMargins(12,12,12,12); self.main.setSpacing(8)
@@ -646,12 +708,13 @@ class WT7App(QWidget):
                 w.writerow({key:'' for key in fieldnames}); w.writerows(averaged)
     def show_scan_result(self,axis,antenna,path,rows):
         d=QDialog(self); d.setWindowTitle(f'{antenna} {axis.value} Scan'); v=QVBoxLayout(d); v.addWidget(lbl(f'{antenna} {axis.value} scan saved to {path.name}'))
-        v.addWidget(ScanPlotWidget(axis,rows,d))
-        try:
-            best=max(rows,key=lambda row: float(row['power_value']))
-            v.addWidget(lbl(f"Peak sample offset {float(best['offset_degrees']):+0.2f} deg, power {float(best['power_value']):0.2f} {best.get('power_unit','dBFS')}"))
-        except Exception:
-            pass
+        plot=ScanPlotWidget(axis,rows,d); v.addWidget(plot)
+        points=[(float(r['offset_degrees']),float(r['power_value'])) for r in rows if r.get('power_value') is not None]
+        fit=plot.fit_gaussian_with_slope(points) if points else None
+        if fit:
+            unit=str(rows[-1].get('power_unit','dBFS')); fwhm=2.35482*fit['sigma']; v.addWidget(lbl(f"Boresight error {fit['center']:+0.3f} deg; FWHM {fwhm:0.3f} deg; peak {fit['peak']:0.2f} {unit}; RMS {fit['rms']:0.3f} dB"))
+        else:
+            v.addWidget(lbl('Gaussian fit unavailable'))
         close=btn('Close'); close.clicked.connect(d.accept); v.addWidget(close,alignment=Qt.AlignRight); d.resize(640,440); self.scan_result_dialog=d; d.show()
     def yfactor_hot_target(self,label):
         if label == 'Sun': return self.target_for_kind('sun')
