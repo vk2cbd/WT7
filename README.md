@@ -41,3 +41,4 @@ The full renamed Tkinter implementation is retained as `wt7_tk_legacy_gui.py` du
 - `wt7_astro.py` / `wt7_solar.py` - source, Sun, and Moon position calculations
 - `wt7_logging.py` - JSON-lines event log
 - `WT7_REQUIREMENTS.md` - carried-forward system requirements/specification
+- `WT7_APP_DESCRIPTION.md` - high-level and detailed application description with consolidated requirements
