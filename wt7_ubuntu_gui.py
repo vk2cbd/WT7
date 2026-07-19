@@ -614,16 +614,28 @@ class WT7App(QWidget):
         if ev: ev.set()
     def start_tracking(self,kind):
         if not self.sessions: self.set_status('Connect antennas before tracking.'); return
-        self.tracking_stop.set(); self.tracking_stop=threading.Event(); self.tracking_kind=kind
-        for n in self.sessions: self.cards[n].set_state('TRACKING')
-        self.run_thread(lambda:self.tracking_loop(kind),'Tracking'); self.set_status(f'Tracking {kind.title()}.')
-    def tracking_loop(self,kind):
+        self.tracking_stop.set()
+        stop=threading.Event()
         try:
-            while not self.tracking_stop.is_set():
-                target=self.current_tracking_target(kind); self.emit(lambda t:self.apply_target(t),target); self.slew_all_to_target(target,'TRACKING',self.tracking_stop)
+            target=self.current_tracking_target(kind)
+            for n,s in self.sessions.items():
+                effective_target=self.apply_scan_offset(target,n)
+                s.config.limits.assert_position_allowed(effective_target.azimuth,effective_target.elevation)
+        except Exception as e:
+            self.tracking_kind=''; self.current_target=None; self.tracking_stop=threading.Event(); self.set_status(f'Tracking fault: {e}'); return
+        self.tracking_stop=stop; self.tracking_kind=kind; self.apply_target(target)
+        for n in self.sessions: self.cards[n].set_state('TRACKING')
+        self.run_thread(lambda:self.tracking_loop(kind,stop),'Tracking'); self.set_status(f'Tracking {kind.title()}.')
+    def tracking_loop(self,kind,stop):
+        try:
+            while not stop.is_set():
+                target=self.current_tracking_target(kind); self.emit(lambda t:self.apply_target(t),target); self.slew_all_to_target(target,'TRACKING',stop)
                 until=time.monotonic()+max(0.1,self.site.track_interval_seconds)
-                while not self.tracking_stop.is_set() and time.monotonic()<until: time.sleep(0.1)
-        except Exception as e: self.emit(lambda m:self.set_status(f'Tracking fault: {m}'),str(e))
+                while not stop.is_set() and time.monotonic()<until: time.sleep(0.1)
+        except Exception as e:
+            if stop is self.tracking_stop:
+                self.tracking_kind=''; self.tracking_stop.set()
+            self.emit(lambda m:self.set_status(f'Tracking fault: {m}'),str(e))
     def park_all(self):
         if not self.sessions: self.set_status('Connect antennas before parking.'); return
         self.tracking_stop.set(); self.tracking_kind=''; stop=threading.Event(); sessions=list(self.sessions.items()); self.set_status('Parking antennas.')
