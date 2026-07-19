@@ -523,8 +523,14 @@ class WT7App(QWidget):
             QLabel#bold{font-weight:700}
             QFrame#panel{background:#f1f1f0;border:1px solid #d7d7d5}
             QPushButton{background:#fff;color:#111820;border:1px solid #cfd3d6;border-radius:8px;padding:4px 10px;min-height:20px;min-width:62px}
+            QPushButton:hover{background:#eef4fb;border-color:#9bbbe0}
+            QPushButton:pressed{background:#cfe0f4;border:2px solid #4d87c7;padding:3px 9px}
             QPushButton#primary{background:#121820;color:white;border-color:#121820}
+            QPushButton#primary:hover{background:#243244;border-color:#243244}
+            QPushButton#primary:pressed{background:#36506f;border:2px solid #79aee8;padding:3px 9px}
             QPushButton#danger{color:#e74b2c;border-color:#e74b2c}
+            QPushButton#danger:hover{background:#fff0ed}
+            QPushButton#danger:pressed{background:#ffd7ce;border:2px solid #e74b2c;padding:3px 9px}
             QLineEdit{background:white;color:#111820;border:1px solid #d8dadd;border-radius:8px;padding:3px 7px}
             QLabel#stateGood{background:#ead7c9;border:1px solid #dcc2ae;padding:5px 8px}
             QLabel#stateBusy{background:#d9e7f8;border:1px solid #bed3ed;padding:5px 8px}
@@ -798,7 +804,9 @@ class WT7App(QWidget):
         if self.yfactor_thread and self.yfactor_thread.is_alive(): dialog.set_status('Y Factor already running.'); return
         if antenna not in self.sessions: dialog.set_status('Connect and select an antenna before Y Factor measurement.'); return
         if self.power.current_power_measurement(antenna) is None: dialog.set_status(f"Start B210 power and wait for CH {self.power.power_channel_for_antenna(antenna)} readings before Y Factor measurement."); return
+        self.tracking_stop.set(); self.tracking_kind=''; self.current_target=self.yfactor_hot_target(label)
         self.yfactor_stop.clear(); dialog.set_status(f'Y Factor starting on {antenna}.'); self.set_status(f'Y Factor starting on {antenna}.')
+        self.cards[antenna].set_state('YFACTOR')
         self.yfactor_thread=threading.Thread(target=lambda:self.yfactor_worker(dialog,antenna,label,cold_mode,cold_az,cold_el,cold_ra,cold_dec,count,dwell,alternate),daemon=True); self.yfactor_thread.start()
     def stop_yfactor(self): self.yfactor_stop.set(); self.set_status('Y Factor stop requested.')
     def yfactor_worker(self,dialog,antenna,label,cold_mode,cold_az,cold_el,cold_ra,cold_dec,count,dwell,alternate):
@@ -806,12 +814,13 @@ class WT7App(QWidget):
         try:
             for name,s in list(self.sessions.items()):
                 if name!=antenna: s.stop_all(); self.emit(lambda n:self.cards[n].set_state('STOPPED'),name)
+            self.emit(lambda data:self.cards[data[0]].set_state(data[1]),(antenna,'YFACTOR'))
             for i in range(1,count+1):
                 phases=('hot','cold') if (not alternate or i%2==1) else ('cold','hot'); results={}
                 for phase in phases:
                     if self.yfactor_stop.is_set(): break
                     hot=self.yfactor_hot_target(label); target=hot if phase=='hot' else self.yfactor_cold_target(cold_mode,hot,cold_az,cold_el,cold_ra,cold_dec)
-                    self.emit(lambda s:dialog.set_status(s),f'Measurement {i}/{count}: {phase}.'); self.emit(lambda t:self.apply_target(t),hot)
+                    self.emit(lambda s:dialog.set_status(s),f'Measurement {i}/{count}: {phase}.'); self.emit(lambda t:self.apply_target(t),hot); self.emit(lambda data:self.cards[data[0]].set_state(data[1]),(antenna,'YFACTOR'))
                     session.guarded_slew_to(target.azimuth,target.elevation,session.config.az_track_speed,session.config.el_track_speed,self.yfactor_stop,self.az_tol(),self.el_tol(),self.site.az_stop_tolerance_degrees,self.site.el_stop_tolerance_degrees,self.site.az_slow_speed,self.site.el_slow_speed,self.site.az_slow_threshold_degrees,self.site.el_slow_threshold_degrees,lambda p:self.emit(lambda data:self.update_position(*data),(antenna,p)),target_callback=(lambda _p, phase=phase: (self.yfactor_hot_target(label).azimuth,self.yfactor_hot_target(label).elevation) if phase=='hot' else (self.yfactor_cold_target(cold_mode,self.yfactor_hot_target(label),cold_az,cold_el,cold_ra,cold_dec).azimuth,self.yfactor_cold_target(cold_mode,self.yfactor_hot_target(label),cold_az,cold_el,cold_ra,cold_dec).elevation)))
                     results[phase]=self.collect_yfactor_power(antenna,dwell)
                 if self.yfactor_stop.is_set(): break
@@ -823,7 +832,9 @@ class WT7App(QWidget):
             self.emit(lambda m:dialog.set_status(m),msg); self.emit(lambda m:self.set_status(m),msg)
         except Exception as exc:
             self.emit(lambda m:dialog.set_status(m),str(exc)); self.emit(lambda m:self.set_status(f'Y Factor fault: {m}'),str(exc))
-        finally: self.yfactor_stop.clear()
+        finally:
+            self.yfactor_stop.clear()
+            self.emit(lambda name:self.cards[name].set_state('STOPPED'),antenna)
     def collect_yfactor_power(self,antenna,dwell):
         vals=[]; end=time.monotonic()+dwell
         while time.monotonic()<end and not self.yfactor_stop.is_set():
