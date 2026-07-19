@@ -564,8 +564,10 @@ class SafeAntenna:
         el_slow_threshold: float = 3.0,
         update_callback: Optional[Callable[[Position], None]] = None,
         target_callback: Optional[Callable[[Position], tuple[float, float]]] = None,
+        apply_az_low_to_high_compensation: bool = True,
     ) -> Position:
-        target_azimuth = normalize_degrees(target_azimuth)
+        requested_target_azimuth = normalize_degrees(target_azimuth)
+        target_azimuth = requested_target_azimuth
         az_start_tolerance = max(0.01, abs(float(az_start_tolerance)))
         el_start_tolerance = max(0.01, abs(float(el_start_tolerance)))
         az_stop_tolerance = _clamp_signed_stop_tolerance(az_stop_tolerance, az_start_tolerance)
@@ -579,6 +581,9 @@ class SafeAntenna:
         self.config.limits.assert_position_allowed(target_azimuth, target_elevation)
 
         pos = self.read_position()
+        target_azimuth = self._az_target_with_low_to_high_compensation(
+            pos.azimuth, requested_target_azimuth, target_elevation, apply_az_low_to_high_compensation
+        )
         az_error = self.config.limits.azimuth_delta_to_target(pos.azimuth, target_azimuth)
         el_error = target_elevation - pos.elevation
         active: dict[Axis, dict[str, object]] = {}
@@ -609,7 +614,9 @@ class SafeAntenna:
         self._motion_event(
             "SLEW_PLAN",
             target_az=target_azimuth,
+            requested_target_az=requested_target_azimuth,
             target_el=target_elevation,
+            az_low_to_high_compensation=self.config.az_low_to_high_compensation if apply_az_low_to_high_compensation else 0.0,
             start_az=pos.azimuth,
             start_el=pos.elevation,
             start_raw_az=pos.raw_azimuth,
@@ -667,8 +674,11 @@ class SafeAntenna:
                 with self.lock:
                     pos = self.read_position_locked()
                     if target_callback:
-                        target_azimuth, target_elevation = target_callback(pos)
-                        target_azimuth = normalize_degrees(target_azimuth)
+                        requested_target_azimuth, target_elevation = target_callback(pos)
+                        requested_target_azimuth = normalize_degrees(requested_target_azimuth)
+                        target_azimuth = self._az_target_with_low_to_high_compensation(
+                            pos.azimuth, requested_target_azimuth, target_elevation, apply_az_low_to_high_compensation
+                        )
                         self.config.limits.assert_position_allowed(target_azimuth, target_elevation)
                         az_error = self.config.limits.azimuth_delta_to_target(pos.azimuth, target_azimuth)
                         el_error = target_elevation - pos.elevation
@@ -946,6 +956,22 @@ class SafeAntenna:
         finally:
             with self.lock:
                 self._stop_axis(axis)
+
+    def _az_target_with_low_to_high_compensation(
+        self, current_azimuth: float, target_azimuth: float, target_elevation: float, apply_compensation: bool
+    ) -> float:
+        target_azimuth = normalize_degrees(target_azimuth)
+        if not apply_compensation:
+            return target_azimuth
+        compensation = max(0.0, float(self.config.az_low_to_high_compensation or 0.0))
+        if compensation <= 0.0:
+            return target_azimuth
+        delta = self.config.limits.azimuth_delta_to_target(current_azimuth, target_azimuth)
+        if delta <= 0.0:
+            return target_azimuth
+        compensated = normalize_degrees(target_azimuth + compensation)
+        self.config.limits.assert_position_allowed(compensated, target_elevation)
+        return compensated
 
     def stop_all(self) -> None:
         with self.lock:

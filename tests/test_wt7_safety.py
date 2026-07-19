@@ -1,6 +1,8 @@
 import unittest
 
-from wt7_antenna import Direction, SafetyError, SafetyLimits
+from types import SimpleNamespace
+
+from wt7_antenna import Direction, SafeAntenna, SafetyError, SafetyLimits
 
 
 class SafetyLimitTests(unittest.TestCase):
@@ -22,6 +24,17 @@ class SafetyLimitTests(unittest.TestCase):
         limits = SafetyLimits(az_min=270.0, az_max=265.0, el_min=0.0, el_max=90.0, el_margin=0.5)
         with self.assertRaises(SafetyError):
             limits.assert_move_allowed(Direction.EL_UP, 20.0, 89.8)
+
+    def test_low_to_high_compensation_offsets_target(self):
+        antenna = object.__new__(SafeAntenna)
+        antenna.config = SimpleNamespace(
+            az_low_to_high_compensation=0.5,
+            limits=SafetyLimits(az_min=270.0, az_max=265.0, el_min=0.0, el_max=90.0),
+        )
+        self.assertAlmostEqual(antenna._az_target_with_low_to_high_compensation(20.0, 30.0, 45.0, True), 30.5)
+        self.assertAlmostEqual(antenna._az_target_with_low_to_high_compensation(30.0, 20.0, 45.0, True), 20.0)
+        self.assertAlmostEqual(antenna._az_target_with_low_to_high_compensation(20.0, 30.0, 45.0, False), 30.0)
+
 
 
 if __name__ == "__main__":

@@ -8,7 +8,9 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PyQt5.QtWidgets import QApplication
 
+from wt7_antenna import Axis
 from wt7_astro import TargetPosition
+from wt7_config import ScanConfig
 from wt7_ubuntu_gui import WT7App
 
 
@@ -79,6 +81,16 @@ dec_degrees = -80.0
         first_worker()
 
         self.assertEqual(seen, [("sun", False)])
+
+
+    def test_scan_preload_uses_antenna_compensation(self):
+        app = self.make_app()
+        app.configs["East"].az_low_to_high_compensation = 0.5
+        high_to_low = ScanConfig(span_degrees=5.0, increment_degrees=0.5, antenna_name="East", az_scan_high_to_low=True)
+        low_to_high = ScanConfig(span_degrees=5.0, increment_degrees=0.5, antenna_name="East", az_scan_high_to_low=False)
+
+        self.assertAlmostEqual(app.scan_preload_offset(Axis.AZIMUTH, high_to_low, 5.0), 5.5)
+        self.assertAlmostEqual(app.scan_preload_offset(Axis.AZIMUTH, low_to_high, -5.0), -5.5)
 
 
 

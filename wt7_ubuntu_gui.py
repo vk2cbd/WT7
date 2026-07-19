@@ -660,7 +660,7 @@ class WT7App(QWidget):
                 try:
                     effective_target=self.apply_scan_offset(target,n); display_state=self.movement_display_state(n,s,effective_target,activity)
                     self.emit(lambda data:self.cards[data[0]].set_state(data[1]),(n,display_state)); s.config.limits.assert_position_allowed(effective_target.azimuth,effective_target.elevation)
-                    s.guarded_slew_to(effective_target.azimuth,effective_target.elevation,s.config.az_track_speed,s.config.el_track_speed,stop,self.az_tol(),self.el_tol(),self.site.az_stop_tolerance_degrees,self.site.el_stop_tolerance_degrees,self.site.az_slow_speed,self.site.el_slow_speed,self.site.az_slow_threshold_degrees,self.site.el_slow_threshold_degrees,lambda p,n=n:self.emit(lambda data:self.update_position(*data),(n,p)))
+                    s.guarded_slew_to(effective_target.azimuth,effective_target.elevation,s.config.az_track_speed,s.config.el_track_speed,stop,self.az_tol(),self.el_tol(),self.site.az_stop_tolerance_degrees,self.site.el_stop_tolerance_degrees,self.site.az_slow_speed,self.site.el_slow_speed,self.site.az_slow_threshold_degrees,self.site.el_slow_threshold_degrees,lambda p,n=n:self.emit(lambda data:self.update_position(*data),(n,p)),apply_az_low_to_high_compensation=(activity!='SCAN'))
                     if not stop.is_set(): self.emit(lambda name:self.cards[name].set_state(activity),n)
                 except Exception as e: self.emit(lambda data:self.mark_fault(*data),(n,str(e)))
             t=threading.Thread(target=worker,daemon=True); threads.append(t); t.start()
@@ -755,16 +755,32 @@ class WT7App(QWidget):
         except Exception as exc: dialog.set_status(str(exc))
     def stop_scan(self):
         self.scan_stop.set(); self.set_status('Scan stop requested.')
+    def scan_preload_offset(self,axis,cfg,first_offset):
+        if axis != Axis.AZIMUTH: return None
+        comp=max(0.0,float(self.configs[cfg.antenna_name].az_low_to_high_compensation or 0.0))
+        if comp <= 0.0: return None
+        return first_offset + comp if cfg.az_scan_high_to_low else first_offset - comp
+    def slew_scan_offset(self,cfg,axis,offset,status_text=None,dialog=None):
+        nominal=self.current_tracking_target(self.tracking_kind)
+        self.set_scan_offset(cfg.antenna_name,axis,offset)
+        self.emit(lambda t:self.apply_target(t),nominal)
+        if status_text and dialog: self.emit(lambda s:dialog.set_status(s),status_text)
+        self.slew_all_to_target(nominal,'SCAN',self.scan_stop)
+        return nominal
+
     def scan_worker(self,axis,cfg,dialog):
         rows=[]; offsets=self.scan_offsets(axis,cfg); total_points=max(1,len(offsets)*cfg.scan_count); point_no=0; scan_dir=Path(self.config_path).parent/'scan'; scan_dir.mkdir(exist_ok=True); csv_path=scan_dir/f"wt7_scan_{cfg.antenna_name.lower()}_{axis.value}_{datetime.now():%Y%m%d-%H%M%S}.csv"
         try:
             self.set_scan_offset(cfg.antenna_name,axis,offsets[0] if offsets else 0.0)
             for scan_no in range(1,cfg.scan_count+1):
+                if offsets and not self.scan_stop.is_set():
+                    preload=self.scan_preload_offset(axis,cfg,offsets[0])
+                    if preload is not None:
+                        self.slew_scan_offset(cfg,axis,preload,f'{cfg.antenna_name} {axis.value} scan {scan_no}/{cfg.scan_count} preload offset {preload:+0.2f}',dialog)
                 for offset in offsets:
                     if self.scan_stop.is_set(): break
                     point_no+=1
-                    nominal=self.current_tracking_target(self.tracking_kind); target=self.offset_target(nominal,axis,offset); self.set_scan_offset(cfg.antenna_name,axis,offset); self.emit(lambda t:self.apply_target(t),nominal); self.emit(lambda s:dialog.set_status(s),f'{cfg.antenna_name} {axis.value} scan {scan_no}/{cfg.scan_count} point {point_no}/{total_points} offset {offset:+0.2f}')
-                    self.slew_all_to_target(nominal,'SCAN',self.scan_stop)
+                    nominal=self.slew_scan_offset(cfg,axis,offset,f'{cfg.antenna_name} {axis.value} scan {scan_no}/{cfg.scan_count} point {point_no}/{total_points} offset {offset:+0.2f}',dialog); target=self.offset_target(nominal,axis,offset)
                     if self.scan_stop.is_set(): break
                     rows.append(self.collect_power_point(axis,offset,cfg.dwell_seconds,nominal,target,cfg.antenna_name,scan_no))
                 if self.scan_stop.is_set(): break
