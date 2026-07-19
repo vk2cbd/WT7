@@ -1,5 +1,6 @@
 import os
 import tempfile
+from datetime import datetime, timezone
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
@@ -11,6 +12,7 @@ from PyQt5.QtWidgets import QApplication
 from wt7_antenna import Axis
 from wt7_astro import TargetPosition
 from wt7_config import ScanConfig
+from wt7_b210_power import B210PowerReading
 from wt7_ubuntu_gui import WT7App
 
 
@@ -102,6 +104,19 @@ dec_degrees = -80.0
         self.assertTrue(app.az_lh_compensation_for_tracking("East", session, TargetPosition("Sun", 0.1, 45.0), "TRACKING"))
         self.assertTrue(app.az_lh_compensation_for_tracking("East", session, TargetPosition("Sun", 0.12, 45.0), "TRACKING"))
         self.assertFalse(app.az_lh_compensation_for_tracking("East", session, TargetPosition("Sun", 0.05, 45.0), "TRACKING"))
+
+
+    def test_b210_clear_reading_blanks_display_and_measurement(self):
+        app = self.make_app()
+        app.power.set_reading(B210PowerReading(datetime.now(timezone.utc), -25.8, -25.3, 1024))
+        self.assertIsNotNone(app.power.current_power_measurement("East"))
+
+        app.power.clear_reading("SDR RELEASED")
+
+        self.assertEqual(app.power.a_val.text(), "--.-")
+        self.assertEqual(app.power.b_val.text(), "--.-")
+        self.assertIsNone(app.power.current_power_measurement("East"))
+        self.assertIsNone(app.power.current_power_measurement("West"))
 
 
 

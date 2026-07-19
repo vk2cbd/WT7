@@ -101,6 +101,9 @@ class B210Panel(Panel):
         keep=max(1,int(float(self.avg.text() or '1'))); self.a_hist=(self.a_hist+[r.power_a_dbfs])[-keep:]; self.b_hist=(self.b_hist+[r.power_b_dbfs])[-keep:]; aa=sum(self.a_hist)/len(self.a_hist); bb=sum(self.b_hist)/len(self.b_hist)
         self.latest_power_dbfs=aa; self.latest_power_b_dbfs=bb; self.active_calibrations=getattr(self,'active_calibrations',{})
         self.a_val.setText(f'{aa:0.1f}'); self.b_val.setText(f'{bb:0.1f}')
+    def clear_reading(self,status='SDR RELEASED'):
+        self.a_hist=[]; self.b_hist=[]; self.latest_power_dbfs=None; self.latest_power_b_dbfs=None
+        self.a_val.setText('--.-'); self.b_val.setText('--.-'); self.a_unit.setText('dBFS'); self.b_unit.setText('dBFS'); self.status.setText(status)
     def power_channel_for_antenna(self, antenna_name: str) -> str:
         attrs = object.__getattribute__(self, '__dict__')
         app = attrs.get('app')
@@ -906,14 +909,14 @@ class WT7App(QWidget):
         if self.b210_thread and self.b210_thread.is_alive(): self.set_status('B210 already running.'); return
         try: cfg=self.power.meter_config(); self.power_config=self.power.save_config(); save_power_config(self.config_path,self.power_config)
         except Exception as e: self.set_status(f'B210 config fault: {e}'); return
-        self.b210_stop.clear(); self.power.status.setText('SDR POWER ON UNCAL')
+        self.b210_stop.clear(); self.power.clear_reading('SDR POWER ON UNCAL')
         def worker():
             try:
                 with B210PowerMeter(cfg) as meter:
                     while not self.b210_stop.is_set(): self.emit(lambda r:self.handle_b210(r),meter.read_power())
             except Exception as e:
                 if not self.b210_stop.is_set(): self.emit(lambda m:self.set_status(f'B210 fault: {m}'),str(e))
-            finally: self.emit(lambda _x:self.power.status.setText('SDR RELEASED'),None)
+            finally: self.emit(lambda _x:self.power.clear_reading('SDR RELEASED'),None)
         self.b210_thread=threading.Thread(target=worker,daemon=True); self.b210_thread.start(); self.set_status('B210 power started.')
     def stop_b210(self): self.b210_stop.set(); self.stop_b210_log(); self.set_status('B210 release requested.')
     def handle_b210(self,r):
