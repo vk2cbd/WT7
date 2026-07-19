@@ -32,6 +32,10 @@ def btn(text, name=''):
     w=QPushButton(text); w.setMinimumSize(QSize(46,28)); w.setObjectName(name); return w
 def edit(text, width=70):
     w=QLineEdit(str(text)); w.setFixedWidth(width); return w
+def lock_width(widget, sample: str, pad: int = 10):
+    width = widget.fontMetrics().horizontalAdvance(sample) + pad
+    widget.setMinimumWidth(width); widget.setMaximumWidth(width)
+    return widget
 class Panel(QFrame):
     def __init__(self): super().__init__(); self.setObjectName('panel'); self.setFrameShape(QFrame.StyledPanel)
 class AntennaCard(Panel):
@@ -39,25 +43,26 @@ class AntennaCard(Panel):
     def __init__(self,name):
         super().__init__(); self.name=name; self.setMinimumHeight(126); self.setMaximumHeight(138)
         g=QGridLayout(self); g.setContentsMargins(10,8,10,8); g.setHorizontalSpacing(10); g.setVerticalSpacing(5)
-        title=bold(name.upper()); title.setMinimumWidth(72); self.state=lbl('DISCONNECTED','stateStopped')
-        self.az=bold('--',18); self.el=bold('--',18); self.az.setMinimumWidth(78); self.el.setMinimumWidth(78)
-        self.az_err=lbl('--'); self.el_err=lbl('--'); self.az_err.setMinimumWidth(58); self.el_err.setMinimumWidth(58)
-        self.limits=lbl('SAFE','safe'); self.limits.setMinimumWidth(72); self.mode=lbl('--'); self.mode.setMinimumWidth(70); self.target=lbl('--'); self.target.setMinimumWidth(130)
+        title=bold(name.upper()); title.setMinimumWidth(72); self.state=lbl('DISCONNECTED','stateStopped'); lock_width(self.state,'DISCONNECTED',18)
+        self.az=bold('--.--',18); self.el=bold('--.--',18); lock_width(self.az,'359.99',12); lock_width(self.el,'090.00',12)
+        self.az_err=lbl('--.--'); self.el_err=lbl('--.--'); lock_width(self.az_err,'+999.99',10); lock_width(self.el_err,'+999.99',10)
+        self.limits=lbl('SAFE','safe'); lock_width(self.limits,'FAULT',18); self.mode=lbl('--'); lock_width(self.mode,'Disconnected',10); self.target=lbl('--.-- / --.--'); lock_width(self.target,'359.99 / 090.00',12)
         g.addWidget(title,0,0,1,2); g.addWidget(self.state,0,8,1,2,Qt.AlignRight)
-        g.addWidget(lbl('AZ','muted'),1,0); g.addWidget(self.az,1,1); g.addWidget(lbl('AZ err','muted'),1,2); g.addWidget(self.az_err,1,3); g.addWidget(lbl('Limits','muted'),1,4); g.addWidget(self.limits,1,5)
-        g.addWidget(lbl('EL','muted'),2,0); g.addWidget(self.el,2,1); g.addWidget(lbl('EL err','muted'),2,2); g.addWidget(self.el_err,2,3); g.addWidget(lbl('Mode','muted'),2,4); g.addWidget(self.mode,2,5)
-        g.addWidget(lbl('Target','muted'),3,2); g.addWidget(self.target,3,3,1,3)
+        g.addWidget(lbl('AZ','muted'),1,0); g.addWidget(self.az,1,1); g.addWidget(lbl('AZ err','muted'),1,3); g.addWidget(self.az_err,1,4); g.addWidget(lbl('Limits','muted'),1,5); g.addWidget(self.limits,1,6)
+        g.addWidget(lbl('EL','muted'),2,0); g.addWidget(self.el,2,1); g.addWidget(lbl('EL err','muted'),2,3); g.addWidget(self.el_err,2,4); g.addWidget(lbl('Mode','muted'),2,5); g.addWidget(self.mode,2,6)
+        g.addWidget(lbl('Target','muted'),3,3); g.addWidget(self.target,3,4,1,3)
         c=QWidget(); c.setObjectName('manualPad'); cg=QGridLayout(c); cg.setContentsMargins(0,0,0,0); cg.setHorizontalSpacing(6); cg.setVerticalSpacing(6)
         for text,direction,row,col in [('EL+',Direction.EL_UP.value,0,1),('AZ-',Direction.AZ_CCW.value,1,0),('AZ+',Direction.AZ_CW.value,1,2),('EL-',Direction.EL_DOWN.value,2,1)]:
             b=btn(text); b.setFixedSize(64,30); b.pressed.connect(lambda d=direction: self.jog_pressed.emit(self.name,d)); b.released.connect(lambda: self.jog_released.emit(self.name)); cg.addWidget(b,row,col)
         stop=btn('STOP'); stop.setFixedSize(64,30); stop.clicked.connect(lambda: self.stop_clicked.emit(self.name)); cg.addWidget(stop,1,1)
-        g.addWidget(c,1,6,3,3,Qt.AlignLeft|Qt.AlignVCenter)
-        g.setColumnMinimumWidth(6,6); g.setColumnStretch(9,1)
+        g.addWidget(c,1,7,3,3,Qt.AlignLeft|Qt.AlignVCenter)
+        g.setColumnMinimumWidth(1,self.az.maximumWidth()); g.setColumnMinimumWidth(2,18); g.setColumnMinimumWidth(4,self.az_err.maximumWidth()); g.setColumnMinimumWidth(6,self.limits.maximumWidth())
+        g.setColumnMinimumWidth(7,6); g.setColumnStretch(10,1)
     def set_position(self,pos: Optional[Position]):
-        self.az.setText('--' if pos is None else f'{pos.azimuth:0.2f}'); self.el.setText('--' if pos is None else f'{pos.elevation:0.2f}')
+        self.az.setText('--.--' if pos is None else f'{pos.azimuth:06.2f}'); self.el.setText('--.--' if pos is None else f'{pos.elevation:05.2f}')
     def set_target(self,target: Optional[TargetPosition], pos: Optional[Position]):
-        if not target: self.target.setText('--'); self.az_err.setText('--'); self.el_err.setText('--'); return
-        self.target.setText(f'{target.azimuth:0.2f} / {target.elevation:0.2f}')
+        if not target: self.target.setText('--.-- / --.--'); self.az_err.setText('--.--'); self.el_err.setText('--.--'); return
+        self.target.setText(f'{target.azimuth:06.2f} / {target.elevation:05.2f}')
         if pos: self.az_err.setText(f'{shortest_angle_delta(pos.azimuth,target.azimuth):+0.2f}'); self.el_err.setText(f'{target.elevation-pos.elevation:+0.2f}')
     def set_state(self,text):
         self.state.setText(text.upper()); low=text.lower(); name='stateFault' if 'fault' in low else ('stateBusy' if any(x in low for x in ['slew','park','scan','yfactor','manual','connecting']) else ('stateGood' if 'tracking' in low else 'stateStopped'))
@@ -72,8 +77,8 @@ class B210Panel(Panel):
         top=QHBoxLayout(); top.setSpacing(10)
         params_row=QHBoxLayout(); params_row.setSpacing(7)
         actions_row=QHBoxLayout(); actions_row.setSpacing(7)
-        self.status=lbl('SDR RELEASED'); self.status.setMinimumWidth(112); self.status.setMaximumWidth(132); self.status.setWordWrap(True); self.status.setObjectName('safe')
-        self.a_val=bold('--.-',14); self.b_val=bold('--.-',14); self.a_unit=bold('dBFS'); self.b_unit=bold('dBFS')
+        self.status=lbl('SDR RELEASED'); lock_width(self.status,'SDR POWER ON UNCAL',18); self.status.setWordWrap(True); self.status.setObjectName('safe')
+        self.a_val=bold('--.-',14); self.b_val=bold('--.-',14); lock_width(self.a_val,'-999.9',12); lock_width(self.b_val,'-999.9',12); self.a_unit=bold('dBFS'); self.b_unit=bold('dBFS')
         self.gain_a=edit(power.gain_db,40); self.gain_b=edit(power.gain_b_db,40); self.freq=edit(f'{power.center_frequency_hz/1_000_000:0.1f}',72); self.rate=edit(f'{power.sample_rate_hz/1000:0.0f}',64); self.bw=edit(f'{power.measurement_bandwidth_hz/1000:0.0f}',64); self.clock=edit(power.clock_source or 'internal',78); self.avg=edit(power.smoothing_samples,40); self.gui_hz=edit(f'{power.update_rate_hz:0.0f}',40)
         def add_channel(row,name,value,unit,gain):
             row.addWidget(bold(name)); row.addWidget(value); row.addWidget(unit); row.addWidget(lbl('Gain','muted')); row.addWidget(gain); row.addWidget(lbl('dB'))
@@ -498,12 +503,12 @@ class WT7App(QWidget):
         top2.addStretch(1); main.addLayout(top2)
         header=QHBoxLayout(); header.setSpacing(8)
         src=Panel(); sr=QGridLayout(src); sr.setContentsMargins(8,7,8,7); sr.setHorizontalSpacing(12); sr.setVerticalSpacing(6)
-        sr.addWidget(bold('SOURCE'),0,0); self.source_name=lbl('Target --'); self.source_name.setMinimumWidth(210); self.source_name.setMaximumWidth(260); sr.addWidget(self.source_name,0,1)
-        sr.addWidget(lbl('AZ','muted'),0,2); self.source_az=bold('--',14); self.source_az.setMinimumWidth(72); sr.addWidget(self.source_az,0,3)
-        sr.addWidget(lbl('EL','muted'),0,4); self.source_el=bold('--',14); self.source_el.setMinimumWidth(72); sr.addWidget(self.source_el,0,5)
-        sr.addWidget(lbl('HA','muted'),0,6); self.source_ha=bold('--',14); self.source_ha.setMinimumWidth(78); sr.addWidget(self.source_ha,0,7)
-        self.sun=bold('SUN AZ -- EL --'); self.moon=bold('MOON AZ -- EL --'); sr.addWidget(self.sun,1,0,1,2); sr.addWidget(self.moon,1,2,1,5)
-        ref=Panel(); ref.setMaximumWidth(260); rg=QGridLayout(ref); rg.setContentsMargins(8,7,8,7); rg.setVerticalSpacing(6); self.local=lbl('Local --'); self.utc=lbl('UTC --'); self.lmst=lbl('LMST --'); rg.addWidget(self.local,0,0); rg.addWidget(self.utc,1,0); rg.addWidget(self.lmst,2,0)
+        sr.addWidget(bold('SOURCE'),0,0); self.source_name=lbl('Target --'); lock_width(self.source_name,'Omega Neb M17',12); sr.addWidget(self.source_name,0,1)
+        sr.addWidget(lbl('AZ','muted'),0,2); self.source_az=bold('--.--',14); lock_width(self.source_az,'359.99',12); sr.addWidget(self.source_az,0,3)
+        sr.addWidget(lbl('EL','muted'),0,4); self.source_el=bold('--.--',14); lock_width(self.source_el,'-90.00',12); sr.addWidget(self.source_el,0,5)
+        sr.addWidget(lbl('HA','muted'),0,6); self.source_ha=bold('--:--',14); lock_width(self.source_ha,'-12:00',12); sr.addWidget(self.source_ha,0,7)
+        self.sun=bold('SUN AZ --.-- EL --.--'); self.moon=bold('MOON AZ --.-- EL --.--'); lock_width(self.sun,'SUN AZ 359.99 EL -90.00',12); lock_width(self.moon,'MOON AZ 359.99 EL -90.00',12); sr.addWidget(self.sun,1,0,1,2); sr.addWidget(self.moon,1,2,1,5)
+        ref=Panel(); ref.setMaximumWidth(260); rg=QGridLayout(ref); rg.setContentsMargins(8,7,8,7); rg.setVerticalSpacing(6); self.local=lbl('Local --'); self.utc=lbl('UTC --'); self.lmst=lbl('LMST --'); lock_width(self.local,'Local 2026-07-18 20:42:18 AEST',10); lock_width(self.utc,'UTC 2026-07-18 10:42:18',10); lock_width(self.lmst,'LMST 16:35:51',10); rg.addWidget(self.local,0,0); rg.addWidget(self.utc,1,0); rg.addWidget(self.lmst,2,0)
         header.addWidget(src,0); header.addWidget(ref,0); header.addStretch(1); main.addLayout(header)
         self.status=lbl('')
         for name in self.configs:
@@ -662,7 +667,7 @@ class WT7App(QWidget):
             s=sun_position(self.site.latitude,self.site.longitude); return TargetPosition('Sun',s.azimuth,s.elevation)
         m=moon_position(self.site.latitude,self.site.longitude); return TargetPosition('Moon',m.azimuth,m.elevation)
     def apply_target(self,target):
-        self.current_target=target; self.source_name.setText(target.name); self.source_az.setText(f'{target.azimuth:0.2f}'); self.source_el.setText(f'{target.elevation:0.2f}'); self.source_ha.setText(self.hour_angle(target.name))
+        self.current_target=target; self.source_name.setText(target.name); self.source_az.setText(f'{target.azimuth:06.2f}'); self.source_el.setText(f'{target.elevation:06.2f}'); self.source_ha.setText(self.hour_angle(target.name))
         for n,c in self.cards.items(): c.set_target(target,self.positions.get(n))
     def hour_angle(self,name):
         now=datetime.now(timezone.utc); lst=local_sidereal_time(self.site.longitude,now)/15.0
@@ -673,7 +678,7 @@ class WT7App(QWidget):
         return ha_text(lst-ra)
     def update_reference(self):
         now=datetime.now().astimezone(); utc=now.astimezone(timezone.utc); self.local.setText(f'Local {now:%Y-%m-%d %H:%M:%S %Z}'); self.utc.setText(f'UTC {utc:%Y-%m-%d %H:%M:%S}'); self.lmst.setText(f'LMST {hms(local_sidereal_time(self.site.longitude,utc)/15.0*3600)}')
-        sun=self.target_for_kind('sun'); moon=self.target_for_kind('moon'); self.sun.setText(f'SUN AZ {sun.azimuth:0.2f} EL {sun.elevation:0.2f}'); self.moon.setText(f'MOON AZ {moon.azimuth:0.2f} EL {moon.elevation:0.2f}')
+        sun=self.target_for_kind('sun'); moon=self.target_for_kind('moon'); self.sun.setText(f'SUN AZ {sun.azimuth:06.2f} EL {sun.elevation:06.2f}'); self.moon.setText(f'MOON AZ {moon.azimuth:06.2f} EL {moon.elevation:06.2f}')
         if self.tracking_kind:
             try: self.apply_target(self.current_tracking_target(self.tracking_kind))
             except Exception as e: self.set_status(f'Target update fault: {e}')
