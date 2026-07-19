@@ -486,7 +486,7 @@ PowerMeterPanel = B210Panel
 class WT7App(QWidget):
     def __init__(self,config_path):
         super().__init__(); self.config_path=Path(config_path); self.configs=load_configs(self.config_path); self.site=load_site_config(self.config_path); self.power_config=load_power_config(self.config_path); self.sources=load_sources(self.config_path); self.selected_source_name=self.site.selected_source if self.site.selected_source in self.sources else next(iter(self.sources), '')
-        self.event_log=EventLogger(Path('logs'),self.site.log_retention_days,self.site.log_level); self.state_store=AppStateStore(); self.sessions={}; self.positions={}; self.cards={}; self.current_target=None; self.tracking_kind=''; self.tracking_stop=threading.Event(); self.jog_stops={}; self.b210_stop=threading.Event(); self.b210_thread=None; self.events=queue.Queue(); self.log_handle=None; self.log_writer=None; self.scan_stop=threading.Event(); self.scan_thread=None; self.scan_antenna_name=''; self.scan_axis=None; self.scan_offset_degrees=0.0; self.scan_offset_lock=threading.Lock(); self.scan_result_dialogs=[]; self.yfactor_stop=threading.Event(); self.yfactor_thread=None; self.peak_stop=threading.Event(); self.peak_thread=None
+        self.event_log=EventLogger(Path('logs'),self.site.log_retention_days,self.site.log_level); self.state_store=AppStateStore(); self.sessions={}; self.positions={}; self.cards={}; self.current_target=None; self.tracking_kind=''; self.tracking_stop=threading.Event(); self.jog_stops={}; self.b210_stop=threading.Event(); self.b210_thread=None; self.events=queue.Queue(); self.log_handle=None; self.log_writer=None; self.scan_stop=threading.Event(); self.scan_thread=None; self.scan_antenna_name=''; self.scan_axis=None; self.scan_offset_degrees=0.0; self.scan_offset_lock=threading.Lock(); self.scan_result_dialogs=[]; self.yfactor_stop=threading.Event(); self.yfactor_thread=None; self.peak_stop=threading.Event(); self.peak_thread=None; self.tracking_nominal_az={}
         self.setWindowTitle(f'WT7 ANTENNA CONTROLLER {APP_VERSION}'); self.resize(1120,780); self.setMinimumSize(1080,720); self.build_ui(); self.style_ui(); self.set_status('Load config, connect antennas, then use guarded jogs.'); self.event_log.info('APP_START',version=APP_VERSION,config=str(config_path))
         self.t_ref=QTimer(self); self.t_ref.timeout.connect(self.update_reference); self.t_ref.start(1000); self.t_evt=QTimer(self); self.t_evt.timeout.connect(self.process_events); self.t_evt.start(100); self.t_pos=QTimer(self); self.t_pos.timeout.connect(self.poll_positions); self.t_pos.start(1000)
     def build_ui(self):
@@ -587,12 +587,12 @@ class WT7App(QWidget):
     def finish_disconnect(self,name):
         self.positions.pop(name,None); self.cards[name].set_position(None); self.cards[name].set_target(None,None); self.cards[name].set_state('DISCONNECTED'); self.set_status(f'{name} disconnected.')
     def stop_tracking(self):
-        self.tracking_stop.set()
+        self.tracking_stop.set(); self.tracking_nominal_az.clear()
         for n in self.sessions:
             if n in self.cards: self.cards[n].set_state('STOPPED')
         self.set_status('Tracking stopped.')
     def stop_all(self):
-        self.tracking_stop.set(); [ev.set() for ev in self.jog_stops.values()]
+        self.tracking_stop.set(); self.tracking_nominal_az.clear(); [ev.set() for ev in self.jog_stops.values()]
         for n,s in list(self.sessions.items()): self.run_thread(lambda s=s:s.stop_all(),f'Stop{n}'); self.cards[n].set_state('STOPPED')
         self.set_status('Stopped.')
     def stop_antenna(self,name):
@@ -614,7 +614,7 @@ class WT7App(QWidget):
         if ev: ev.set()
     def start_tracking(self,kind):
         if not self.sessions: self.set_status('Connect antennas before tracking.'); return
-        self.tracking_stop.set()
+        self.tracking_stop.set(); self.tracking_nominal_az.clear()
         stop=threading.Event()
         try:
             target=self.current_tracking_target(kind)
@@ -638,7 +638,7 @@ class WT7App(QWidget):
             self.emit(lambda m:self.set_status(f'Tracking fault: {m}'),str(e))
     def park_all(self):
         if not self.sessions: self.set_status('Connect antennas before parking.'); return
-        self.tracking_stop.set(); self.tracking_kind=''; stop=threading.Event(); sessions=list(self.sessions.items()); self.set_status('Parking antennas.')
+        self.tracking_stop.set(); self.tracking_kind=''; self.tracking_nominal_az.clear(); stop=threading.Event(); sessions=list(self.sessions.items()); self.set_status('Parking antennas.')
         for n,_s in sessions: self.cards[n].set_state('PARKING')
         def park_one(n,s):
             try:
@@ -658,13 +658,24 @@ class WT7App(QWidget):
         for n,s in list(self.sessions.items()):
             def worker(n=n,s=s):
                 try:
-                    effective_target=self.apply_scan_offset(target,n); display_state=self.movement_display_state(n,s,effective_target,activity)
+                    effective_target=self.apply_scan_offset(target,n); display_state=self.movement_display_state(n,s,effective_target,activity); force_comp=self.az_lh_compensation_for_tracking(n,s,effective_target,activity)
                     self.emit(lambda data:self.cards[data[0]].set_state(data[1]),(n,display_state)); s.config.limits.assert_position_allowed(effective_target.azimuth,effective_target.elevation)
-                    s.guarded_slew_to(effective_target.azimuth,effective_target.elevation,s.config.az_track_speed,s.config.el_track_speed,stop,self.az_tol(),self.el_tol(),self.site.az_stop_tolerance_degrees,self.site.el_stop_tolerance_degrees,self.site.az_slow_speed,self.site.el_slow_speed,self.site.az_slow_threshold_degrees,self.site.el_slow_threshold_degrees,lambda p,n=n:self.emit(lambda data:self.update_position(*data),(n,p)),apply_az_low_to_high_compensation=(activity!='SCAN'))
+                    s.guarded_slew_to(effective_target.azimuth,effective_target.elevation,s.config.az_track_speed,s.config.el_track_speed,stop,self.az_tol(),self.el_tol(),self.site.az_stop_tolerance_degrees,self.site.el_stop_tolerance_degrees,self.site.az_slow_speed,self.site.el_slow_speed,self.site.az_slow_threshold_degrees,self.site.el_slow_threshold_degrees,lambda p,n=n:self.emit(lambda data:self.update_position(*data),(n,p)),apply_az_low_to_high_compensation=(activity!='SCAN'),force_az_low_to_high_compensation=force_comp)
                     if not stop.is_set(): self.emit(lambda name:self.cards[name].set_state(activity),n)
                 except Exception as e: self.emit(lambda data:self.mark_fault(*data),(n,str(e)))
             t=threading.Thread(target=worker,daemon=True); threads.append(t); t.start()
         for t in threads: t.join()
+    def az_lh_compensation_for_tracking(self,name,session,target,activity):
+        if activity == 'SCAN': return False
+        if activity != 'TRACKING' or not self.tracking_kind: return None
+        previous=self.tracking_nominal_az.get(name)
+        self.tracking_nominal_az[name]=target.azimuth
+        if previous is None: return None
+        try: delta=session.config.limits.azimuth_delta_to_target(previous,target.azimuth)
+        except Exception: delta=shortest_angle_delta(previous,target.azimuth)
+        if abs(delta) < 1e-6: return None
+        return delta > 0.0
+
     def movement_display_state(self,name,session,target,activity):
         if activity != 'TRACKING': return 'SLEWING'
         pos=self.positions.get(name)
@@ -832,7 +843,7 @@ class WT7App(QWidget):
         if self.yfactor_thread and self.yfactor_thread.is_alive(): dialog.set_status('Y Factor already running.'); return
         if antenna not in self.sessions: dialog.set_status('Connect and select an antenna before Y Factor measurement.'); return
         if self.power.current_power_measurement(antenna) is None: dialog.set_status(f"Start B210 power and wait for CH {self.power.power_channel_for_antenna(antenna)} readings before Y Factor measurement."); return
-        self.tracking_stop.set(); self.tracking_kind=''; self.current_target=self.yfactor_hot_target(label)
+        self.tracking_stop.set(); self.tracking_kind=''; self.tracking_nominal_az.clear(); self.current_target=self.yfactor_hot_target(label)
         self.yfactor_stop.clear(); dialog.set_status(f'Y Factor starting on {antenna}.'); self.set_status(f'Y Factor starting on {antenna}.')
         self.cards[antenna].set_state('YFACTOR')
         self.yfactor_thread=threading.Thread(target=lambda:self.yfactor_worker(dialog,antenna,label,cold_mode,cold_az,cold_el,cold_ra,cold_dec,count,dwell,alternate),daemon=True); self.yfactor_thread.start()
@@ -874,7 +885,7 @@ class WT7App(QWidget):
     def start_peak_axis_tracking(self,dialog,axis,label,antenna):
         if self.peak_thread and self.peak_thread.is_alive(): dialog.set_status('Peak tracking already running.'); return
         if antenna not in self.sessions: dialog.set_status('Connect and select an antenna.'); return
-        self.tracking_stop.set(); self.peak_stop.clear(); self.peak_thread=threading.Thread(target=lambda:self.peak_axis_worker(dialog,axis,label,antenna),daemon=True); self.peak_thread.start(); dialog.set_status(f'Tracking {axis.value} only.')
+        self.tracking_stop.set(); self.tracking_nominal_az.clear(); self.peak_stop.clear(); self.peak_thread=threading.Thread(target=lambda:self.peak_axis_worker(dialog,axis,label,antenna),daemon=True); self.peak_thread.start(); dialog.set_status(f'Tracking {axis.value} only.')
     def stop_peak_tracking(self): self.peak_stop.set(); self.set_status('Peak tracking stop requested.')
     def peak_axis_worker(self,dialog,axis,label,antenna):
         s=self.sessions[antenna]

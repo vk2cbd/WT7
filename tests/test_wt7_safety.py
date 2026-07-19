@@ -34,6 +34,8 @@ class SafetyLimitTests(unittest.TestCase):
         self.assertAlmostEqual(antenna._az_target_with_low_to_high_compensation(20.0, 30.0, 45.0, True), 30.5)
         self.assertAlmostEqual(antenna._az_target_with_low_to_high_compensation(30.0, 20.0, 45.0, True), 20.0)
         self.assertAlmostEqual(antenna._az_target_with_low_to_high_compensation(20.0, 30.0, 45.0, False), 30.0)
+        self.assertAlmostEqual(antenna._az_target_with_low_to_high_compensation(0.6, 0.12, 45.0, True, True), 0.62)
+        self.assertAlmostEqual(antenna._az_target_with_low_to_high_compensation(0.6, 0.12, 45.0, True, False), 0.12)
 
 
 

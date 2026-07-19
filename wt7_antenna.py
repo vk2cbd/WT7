@@ -565,6 +565,7 @@ class SafeAntenna:
         update_callback: Optional[Callable[[Position], None]] = None,
         target_callback: Optional[Callable[[Position], tuple[float, float]]] = None,
         apply_az_low_to_high_compensation: bool = True,
+        force_az_low_to_high_compensation: Optional[bool] = None,
     ) -> Position:
         requested_target_azimuth = normalize_degrees(target_azimuth)
         target_azimuth = requested_target_azimuth
@@ -582,7 +583,7 @@ class SafeAntenna:
 
         pos = self.read_position()
         target_azimuth = self._az_target_with_low_to_high_compensation(
-            pos.azimuth, requested_target_azimuth, target_elevation, apply_az_low_to_high_compensation
+            pos.azimuth, requested_target_azimuth, target_elevation, apply_az_low_to_high_compensation, force_az_low_to_high_compensation
         )
         az_error = self.config.limits.azimuth_delta_to_target(pos.azimuth, target_azimuth)
         el_error = target_elevation - pos.elevation
@@ -677,7 +678,7 @@ class SafeAntenna:
                         requested_target_azimuth, target_elevation = target_callback(pos)
                         requested_target_azimuth = normalize_degrees(requested_target_azimuth)
                         target_azimuth = self._az_target_with_low_to_high_compensation(
-                            pos.azimuth, requested_target_azimuth, target_elevation, apply_az_low_to_high_compensation
+                            pos.azimuth, requested_target_azimuth, target_elevation, apply_az_low_to_high_compensation, force_az_low_to_high_compensation
                         )
                         self.config.limits.assert_position_allowed(target_azimuth, target_elevation)
                         az_error = self.config.limits.azimuth_delta_to_target(pos.azimuth, target_azimuth)
@@ -958,17 +959,18 @@ class SafeAntenna:
                 self._stop_axis(axis)
 
     def _az_target_with_low_to_high_compensation(
-        self, current_azimuth: float, target_azimuth: float, target_elevation: float, apply_compensation: bool
+        self, current_azimuth: float, target_azimuth: float, target_elevation: float, apply_compensation: bool, force_compensation: Optional[bool] = None
     ) -> float:
         target_azimuth = normalize_degrees(target_azimuth)
-        if not apply_compensation:
+        if not apply_compensation or force_compensation is False:
             return target_azimuth
         compensation = max(0.0, float(self.config.az_low_to_high_compensation or 0.0))
         if compensation <= 0.0:
             return target_azimuth
-        delta = self.config.limits.azimuth_delta_to_target(current_azimuth, target_azimuth)
-        if delta <= 0.0:
-            return target_azimuth
+        if force_compensation is None:
+            delta = self.config.limits.azimuth_delta_to_target(current_azimuth, target_azimuth)
+            if delta <= 0.0:
+                return target_azimuth
         compensated = normalize_degrees(target_azimuth + compensation)
         self.config.limits.assert_position_allowed(compensated, target_elevation)
         return compensated

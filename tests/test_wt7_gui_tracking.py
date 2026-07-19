@@ -93,6 +93,17 @@ dec_degrees = -80.0
         self.assertAlmostEqual(app.scan_preload_offset(Axis.AZIMUTH, low_to_high, -5.0), -5.5)
 
 
+    def test_tracking_compensation_uses_source_trend_across_north(self):
+        app = self.make_app()
+        session = _FakeSession()
+        app.tracking_kind = "sun"
+
+        self.assertIsNone(app.az_lh_compensation_for_tracking("East", session, TargetPosition("Sun", 359.8, 45.0), "TRACKING"))
+        self.assertTrue(app.az_lh_compensation_for_tracking("East", session, TargetPosition("Sun", 0.1, 45.0), "TRACKING"))
+        self.assertTrue(app.az_lh_compensation_for_tracking("East", session, TargetPosition("Sun", 0.12, 45.0), "TRACKING"))
+        self.assertFalse(app.az_lh_compensation_for_tracking("East", session, TargetPosition("Sun", 0.05, 45.0), "TRACKING"))
+
+
 
 if __name__ == "__main__":
     unittest.main()
