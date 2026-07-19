@@ -25,6 +25,10 @@ class _FakeLimits:
 class _FakeSession:
     def __init__(self):
         self.config = SimpleNamespace(limits=_FakeLimits())
+        self.stopped = False
+
+    def stop_all(self):
+        self.stopped = True
 
 
 class TrackingStateTests(unittest.TestCase):
@@ -117,6 +121,24 @@ dec_degrees = -80.0
         self.assertEqual(app.power.b_val.text(), "--.-")
         self.assertIsNone(app.power.current_power_measurement("East"))
         self.assertIsNone(app.power.current_power_measurement("West"))
+
+
+    def test_stop_scan_clears_offset_and_stops_active_antenna(self):
+        app = self.make_app()
+        session = _FakeSession()
+        app.sessions = {"East": session}
+        app.active_scan_antenna = "East"
+        app.scan_stop.clear()
+        app.set_scan_offset("East", Axis.AZIMUTH, 2.0)
+        app.run_thread = lambda fn, name="": fn()
+
+        app.stop_scan()
+
+        self.assertTrue(app.scan_stop.is_set())
+        self.assertTrue(session.stopped)
+        self.assertEqual(app.scan_antenna_name, "")
+        self.assertIsNone(app.scan_axis)
+        self.assertEqual(app.scan_offset_degrees, 0.0)
 
 
 

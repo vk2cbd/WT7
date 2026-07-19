@@ -489,7 +489,7 @@ PowerMeterPanel = B210Panel
 class WT7App(QWidget):
     def __init__(self,config_path):
         super().__init__(); self.config_path=Path(config_path); self.configs=load_configs(self.config_path); self.site=load_site_config(self.config_path); self.power_config=load_power_config(self.config_path); self.sources=load_sources(self.config_path); self.selected_source_name=self.site.selected_source if self.site.selected_source in self.sources else next(iter(self.sources), '')
-        self.event_log=EventLogger(Path('logs'),self.site.log_retention_days,self.site.log_level); self.state_store=AppStateStore(); self.sessions={}; self.positions={}; self.cards={}; self.current_target=None; self.tracking_kind=''; self.tracking_stop=threading.Event(); self.jog_stops={}; self.b210_stop=threading.Event(); self.b210_thread=None; self.events=queue.Queue(); self.log_handle=None; self.log_writer=None; self.scan_stop=threading.Event(); self.scan_thread=None; self.scan_antenna_name=''; self.scan_axis=None; self.scan_offset_degrees=0.0; self.scan_offset_lock=threading.Lock(); self.scan_result_dialogs=[]; self.yfactor_stop=threading.Event(); self.yfactor_thread=None; self.peak_stop=threading.Event(); self.peak_thread=None; self.tracking_nominal_az={}; self.modeless_dialogs=[]
+        self.event_log=EventLogger(Path('logs'),self.site.log_retention_days,self.site.log_level); self.state_store=AppStateStore(); self.sessions={}; self.positions={}; self.cards={}; self.current_target=None; self.tracking_kind=''; self.tracking_stop=threading.Event(); self.jog_stops={}; self.b210_stop=threading.Event(); self.b210_thread=None; self.events=queue.Queue(); self.log_handle=None; self.log_writer=None; self.scan_stop=threading.Event(); self.scan_thread=None; self.scan_antenna_name=''; self.scan_axis=None; self.scan_offset_degrees=0.0; self.scan_offset_lock=threading.Lock(); self.scan_result_dialogs=[]; self.yfactor_stop=threading.Event(); self.yfactor_thread=None; self.peak_stop=threading.Event(); self.peak_thread=None; self.tracking_nominal_az={}; self.modeless_dialogs=[]; self.active_scan_antenna=''; self.active_scan_dialog=None
         self.setWindowTitle(f'WT7 ANTENNA CONTROLLER {APP_VERSION}'); self.resize(1120,780); self.setMinimumSize(1080,720); self.build_ui(); self.style_ui(); self.set_status('Load config, connect antennas, then use guarded jogs.'); self.event_log.info('APP_START',version=APP_VERSION,config=str(config_path))
         self.t_ref=QTimer(self); self.t_ref.timeout.connect(self.update_reference); self.t_ref.start(1000); self.t_evt=QTimer(self); self.t_evt.timeout.connect(self.process_events); self.t_evt.start(100); self.t_pos=QTimer(self); self.t_pos.timeout.connect(self.poll_positions); self.t_pos.start(1000)
     def build_ui(self):
@@ -765,11 +765,15 @@ class WT7App(QWidget):
         try:
             self.validate_scan_config(cfg); meas=self.power.current_power_measurement(cfg.antenna_name)
             if meas is None: dialog.set_status(f"Start B210 power and wait for CH {self.power.power_channel_for_antenna(cfg.antenna_name)} readings before scanning."); return
-            save_scan_config(self.config_path,cfg); self.scan_stop.clear(); dialog.set_status(f'{axis.value} scan starting on {cfg.antenna_name}.'); self.set_status(f'{axis.value} scan starting on {cfg.antenna_name}.')
+            save_scan_config(self.config_path,cfg); self.scan_stop.clear(); self.active_scan_antenna=cfg.antenna_name; self.active_scan_dialog=dialog; dialog.set_status(f'{axis.value} scan starting on {cfg.antenna_name}.'); self.set_status(f'{axis.value} scan starting on {cfg.antenna_name}.')
             self.scan_thread=threading.Thread(target=lambda:self.scan_worker(axis,cfg,dialog),daemon=True); self.scan_thread.start()
         except Exception as exc: dialog.set_status(str(exc))
     def stop_scan(self):
-        self.scan_stop.set(); self.set_status('Scan stop requested.')
+        self.scan_stop.set(); self.set_scan_offset(None); self.set_status('Scan stop requested.')
+        dialog=self.active_scan_dialog
+        if dialog: self.emit(lambda d:d.set_status('Scan stop requested.'),dialog)
+        session=self.sessions.get(self.active_scan_antenna)
+        if session: self.run_thread(lambda s=session:s.stop_all(),'StopScanAntenna')
     def scan_preload_offset(self,axis,cfg,first_offset):
         if axis != Axis.AZIMUTH: return None
         comp=max(0.0,float(self.configs[cfg.antenna_name].az_low_to_high_compensation or 0.0))
@@ -806,10 +810,13 @@ class WT7App(QWidget):
         except Exception as exc:
             self.emit(lambda m:dialog.set_status(m),str(exc)); self.emit(lambda m:self.set_status(f'Scan fault: {m}'),str(exc))
         finally:
-            self.set_scan_offset(None); self.scan_stop.clear()
-            if self.tracking_kind:
+            stopped=self.scan_stop.is_set(); self.set_scan_offset(None)
+            if self.active_scan_antenna == cfg.antenna_name:
+                self.active_scan_antenna=''; self.active_scan_dialog=None
+            if self.tracking_kind and not stopped:
                 try: self.slew_all_to_target(self.current_tracking_target(self.tracking_kind),'TRACKING',self.tracking_stop)
                 except Exception: pass
+            self.scan_stop.clear()
     def collect_power_point(self,axis,offset,dwell,nominal,target,antenna,scan_no):
         vals=[]; end=time.monotonic()+dwell
         while time.monotonic()<end and not self.scan_stop.is_set():
