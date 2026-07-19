@@ -42,3 +42,4 @@ The full renamed Tkinter implementation is retained as `wt7_tk_legacy_gui.py` du
 - `wt7_logging.py` - JSON-lines event log
 - `WT7_REQUIREMENTS.md` - carried-forward system requirements/specification
 - `WT7_APP_DESCRIPTION.md` - high-level and detailed application description with consolidated requirements
+- `output/pdf/WT7_APP_DESCRIPTION.pdf` - PDF version of the application description
