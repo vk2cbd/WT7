@@ -631,15 +631,50 @@ class WT7App(QWidget):
         for n in self.sessions: self.cards[n].set_state('TRACKING')
         self.run_thread(lambda:self.tracking_loop(kind,stop),'Tracking'); self.set_status(f'Tracking {kind.title()}.')
     def tracking_loop(self,kind,stop):
+        active_threads={}
         try:
             while not stop.is_set():
-                target=self.current_tracking_target(kind); self.emit(lambda t:self.apply_target(t),target); self.slew_all_to_target(target,'TRACKING',stop)
+                target=self.current_tracking_target(kind); self.emit(lambda t:self.apply_target(t),target)
+                for name,session in list(self.sessions.items()):
+                    if stop.is_set(): break
+                    thread=active_threads.get(name)
+                    if thread and thread.is_alive(): continue
+                    thread=threading.Thread(target=lambda n=name,s=session:self.tracking_worker(n,s,kind,stop),name=f'Track{name}',daemon=True)
+                    active_threads[name]=thread; thread.start()
                 until=time.monotonic()+max(0.1,self.site.track_interval_seconds)
                 while not stop.is_set() and time.monotonic()<until: time.sleep(0.1)
         except Exception as e:
             if stop is self.tracking_stop:
                 self.tracking_kind=''; self.tracking_stop.set()
             self.emit(lambda m:self.set_status(f'Tracking fault: {m}'),str(e))
+        finally:
+            for thread in list(active_threads.values()):
+                if thread.is_alive(): thread.join(timeout=1.0)
+    def tracking_worker(self,name,session,kind,stop):
+        try:
+            target=self.current_tracking_target(kind)
+            effective_target=self.apply_scan_offset(target,name)
+            display_state=self.movement_display_state(name,session,effective_target,'TRACKING')
+            force_comp=self.az_lh_compensation_for_tracking(name,session,effective_target,'TRACKING')
+            self.emit(lambda data:self.cards[data[0]].set_state(data[1]),(name,display_state))
+            session.config.limits.assert_position_allowed(effective_target.azimuth,effective_target.elevation)
+            def live_target(_pos):
+                latest=self.current_tracking_target(kind)
+                self.emit(lambda t:self.apply_target(t),latest)
+                effective=self.apply_scan_offset(latest,name)
+                return effective.azimuth,effective.elevation
+            session.guarded_slew_to(effective_target.azimuth,effective_target.elevation,session.config.az_track_speed,session.config.el_track_speed,stop,self.az_tol(),self.el_tol(),self.site.az_stop_tolerance_degrees,self.site.el_stop_tolerance_degrees,self.site.az_slow_speed,self.site.el_slow_speed,self.site.az_slow_threshold_degrees,self.site.el_slow_threshold_degrees,lambda p,n=name:self.emit(lambda data:self.update_position(*data),(n,p)),target_callback=live_target,apply_az_low_to_high_compensation=True,force_az_low_to_high_compensation=force_comp)
+            if not stop.is_set():
+                try:
+                    latest=self.apply_scan_offset(self.current_tracking_target(kind),name)
+                    state=self.movement_display_state(name,session,latest,'TRACKING')
+                except Exception:
+                    state='TRACKING'
+                self.emit(lambda data:self.cards[data[0]].set_state(data[1]),(name,state))
+        except Exception as e:
+            if stop is self.tracking_stop:
+                self.tracking_kind=''; stop.set()
+            self.emit(lambda data:self.mark_fault(*data),(name,str(e)))
     def park_all(self):
         if not self.sessions: self.set_status('Connect antennas before parking.'); return
         self.tracking_stop.set(); self.tracking_kind=''; self.tracking_nominal_az.clear(); stop=threading.Event(); sessions=list(self.sessions.items()); self.set_status('Parking antennas.')
