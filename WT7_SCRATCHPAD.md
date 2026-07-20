@@ -32,3 +32,21 @@ Test Notes:
 - Record source, antenna, scan axis, scan direction, span, increment, dwell, B210 rate, GUI Hz, Avg, gain, bandwidth, and fitted centre.
 - Repeat scans without changing antenna calibration to check whether fitted centre moves with averaging or integration settings.
 - Compare high-to-low and low-to-high azimuth scans separately so backlash is not confused with averaging effects.
+
+## OLED Display Alignment
+
+Status: open
+
+Observation:
+
+- The controller OLED displays need to be re-aligned with the current WT7 app behaviour and terminology.
+- There may now be a significant mismatch because OLED behaviour has not been checked closely for a while during GUI, scan, B210, Y factor, and tracking development.
+- Any displayed status, source name, target AZ/EL, antenna AZ/EL, scan/tracking/slewing/parking state, and stopped/offline/fault state should be checked against what the main app shows.
+
+Things To Revisit:
+
+- Audit every place WT7 writes to the OLED displays.
+- Compare OLED output with GUI state during connect, disconnect, stopped, manual jog, tracking, slewing, parking, scan calibration, peak calibration, Y factor, fault, and stop-all workflows.
+- Confirm that East and West OLED displays show only their own antenna state unless a shared target/source value is intentionally displayed.
+- Confirm that OLED source labels remain correct during scan and Y factor workflows.
+- Decide whether OLED layout needs a refreshed standard format for WT7.
