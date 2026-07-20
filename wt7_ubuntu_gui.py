@@ -1,6 +1,6 @@
 
 #!/usr/bin/env python3
-"""WT7 PyQt5 antenna controller GUI alpha."""
+"""WT7 PyQt5 antenna controller GUI."""
 from __future__ import annotations
 import argparse, csv, math, queue, threading, time
 from datetime import datetime, timezone
@@ -16,7 +16,7 @@ from wt7_config import PowerConfig, ScanConfig, SourceConfig, YFactorConfig, cal
 from wt7_logging import EventLogger
 from wt7_solar import sun_equatorial, sun_position
 from wt7_state import AppStateStore, SystemRunState
-APP_VERSION = "v0.1-alpha"
+APP_VERSION = "v0.2"
 
 def hms(seconds: float) -> str:
     seconds %= 86400.0; h=int(seconds//3600); m=int((seconds%3600)//60); s=int(seconds%60); return f"{h:02d}:{m:02d}:{s:02d}"
@@ -552,7 +552,7 @@ class WT7App(QWidget):
         if hasattr(self,'ev1'): self.ev1.setText(f"{datetime.now().strftime('%H:%M:%S')}  {msg}")
         self.state_store.set_status(msg,SystemRunState.IDLE)
     def info(self,msg): QMessageBox.information(self,'WT7',msg)
-    def not_ported(self): self.info('This WT7 PyQt5 alpha currently ports the main control surface. Secondary dialogs are still available in wt7_tk_legacy_gui.py during transition.')
+    def not_ported(self): self.info('This WT7 PyQt5 version currently ports the main control surface. Secondary dialogs are still available in wt7_tk_legacy_gui.py during transition.')
     def open_log_hint(self): self.info('Event logs are in the logs directory beside the app.')
     def open_limits(self): LimitsDialog(self).exec_()
     def open_observer(self): ObserverDialog(self).exec_()

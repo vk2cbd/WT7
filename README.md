@@ -1,6 +1,6 @@
 # WT7
 
-WT7 is the PyQt5 alpha of the two-antenna radio astronomy controller. It keeps the established safety/protocol backend, B210 dual-channel power primitives, source position calculations, event logging, and configuration format, while introducing a new Qt main operating surface.
+WT7 is the PyQt5 version of the two-antenna radio astronomy controller. It keeps the established safety/protocol backend, B210 dual-channel power primitives, source position calculations, event logging, and configuration format, while introducing a new Qt main operating surface.
 
 ## Install
 
@@ -25,7 +25,7 @@ Existing prior-version `.ini` files can normally be copied to `wt7_ubuntu.ini`; 
 python3 wt7_ubuntu_gui.py --config wt7_ubuntu.ini
 ```
 
-## Alpha Notes
+## Notes
 
 The PyQt5 main control surface currently includes connect/disconnect, guarded manual jogs, Sun/Moon/source tracking, park, live Sun/Moon/time reference, live antenna positions, and B210 dual-channel power display/logging.
 
@@ -33,7 +33,7 @@ The full renamed Tkinter implementation is retained as `wt7_tk_legacy_gui.py` du
 
 ## Key Files
 
-- `wt7_ubuntu_gui.py` - PyQt5 main operator interface alpha
+- `wt7_ubuntu_gui.py` - PyQt5 main operator interface
 - `wt7_tk_legacy_gui.py` - renamed legacy Tkinter GUI fallback
 - `wt7_antenna.py` - Arduino protocol, controller session, and guarded motion
 - `wt7_config.py` - `.ini` loading/saving
