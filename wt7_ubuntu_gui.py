@@ -92,17 +92,18 @@ class B210Panel(Panel):
         actions_row.addStretch(1)
         gap=QWidget(); gap.setFixedHeight(28); bottom_gap=QWidget(); bottom_gap.setFixedHeight(12)
         main.addLayout(top); main.addWidget(gap); main.addLayout(params_row); main.addLayout(actions_row); main.addWidget(bottom_gap)
-        self.a_hist=[]; self.b_hist=[]
+        self.a_hist=[]; self.b_hist=[]; self.latest_raw_a_dbfs=None; self.latest_raw_b_dbfs=None; self.power_sequence=0
     def meter_config(self):
         return B210PowerMeterConfig(center_frequency_hz=int(float(self.freq.text())*1_000_000), sample_rate_hz=int(float(self.rate.text())*1000), measurement_bandwidth_hz=int(float(self.bw.text())*1000), update_rate_hz=float(self.gui_hz.text()), gain_a_db=float(self.gain_a.text()), gain_b_db=float(self.gain_b.text()), clock_source=self.clock.text().strip() or 'internal', device_args=self.power.b210_device_args)
     def save_config(self):
         self.power.center_frequency_hz=int(float(self.freq.text())*1_000_000); self.power.sample_rate_hz=int(float(self.rate.text())*1000); self.power.measurement_bandwidth_hz=int(float(self.bw.text())*1000); self.power.update_rate_hz=float(self.gui_hz.text()); self.power.gain_db=self.gain_a.text(); self.power.gain_b_db=self.gain_b.text(); self.power.smoothing_samples=max(1,int(float(self.avg.text()))); self.power.clock_source=self.clock.text().strip() or 'internal'; return self.power
     def set_reading(self,r:B210PowerReading):
+        self.latest_raw_a_dbfs=float(r.power_a_dbfs); self.latest_raw_b_dbfs=float(r.power_b_dbfs); self.power_sequence+=1
         keep=max(1,int(float(self.avg.text() or '1'))); self.a_hist=(self.a_hist+[r.power_a_dbfs])[-keep:]; self.b_hist=(self.b_hist+[r.power_b_dbfs])[-keep:]; aa=sum(self.a_hist)/len(self.a_hist); bb=sum(self.b_hist)/len(self.b_hist)
         self.latest_power_dbfs=aa; self.latest_power_b_dbfs=bb; self.active_calibrations=getattr(self,'active_calibrations',{})
         self.a_val.setText(f'{aa:0.1f}'); self.b_val.setText(f'{bb:0.1f}')
     def clear_reading(self,status='SDR RELEASED'):
-        self.a_hist=[]; self.b_hist=[]; self.latest_power_dbfs=None; self.latest_power_b_dbfs=None
+        self.a_hist=[]; self.b_hist=[]; self.latest_power_dbfs=None; self.latest_power_b_dbfs=None; self.latest_raw_a_dbfs=None; self.latest_raw_b_dbfs=None; self.power_sequence=0
         self.a_val.setText('--.-'); self.b_val.setText('--.-'); self.a_unit.setText('dBFS'); self.b_unit.setText('dBFS'); self.status.setText(status)
     def power_channel_for_antenna(self, antenna_name: str) -> str:
         attrs = object.__getattribute__(self, '__dict__')
@@ -116,12 +117,20 @@ class B210Panel(Panel):
         channel = self.power_channel_for_antenna(antenna_name)
         dbfs = getattr(self, 'latest_power_b_dbfs', None) if channel == 'B' else getattr(self, 'latest_power_dbfs', None)
         if dbfs is None: return None
+        return self.measurement_from_dbfs(antenna_name, channel, dbfs, 1)
+    def current_raw_power_measurement(self, antenna_name: str, after_sequence: int = -1) -> Optional[dict[str, object]]:
+        if self.power_sequence <= after_sequence: return None
+        channel = self.power_channel_for_antenna(antenna_name)
+        dbfs = getattr(self, 'latest_raw_b_dbfs', None) if channel == 'B' else getattr(self, 'latest_raw_a_dbfs', None)
+        if dbfs is None: return None
+        return self.measurement_from_dbfs(antenna_name, channel, dbfs, 1)
+    def measurement_from_dbfs(self, antenna_name: str, channel: str, dbfs: float, sample_count: int) -> dict[str, object]:
         cal = getattr(self, 'active_calibrations', {}).get(channel)
         value = float(dbfs); unit = 'dBFS'; calibrated = False; extrapolated = False
         if cal:
             value, extrapolated = calibrated_dbm_from_dbfs(cal, float(dbfs))
             unit = 'dBm'; calibrated = True
-        return {'power_value': value, 'power_dbfs': float(dbfs), 'power_unit': unit, 'power_channel': channel, 'power_calibrated': calibrated, 'power_extrapolated': extrapolated, 'sample_count': 1}
+        return {'power_value': value, 'power_dbfs': float(dbfs), 'power_unit': unit, 'power_channel': channel, 'power_calibrated': calibrated, 'power_extrapolated': extrapolated, 'sample_count': sample_count}
     def log_header(self) -> list[str]:
         return ['utc_time','ch_a_dbfs','ch_a_value','ch_a_unit','ch_a_calibrated','ch_b_dbfs','ch_b_value','ch_b_unit','ch_b_calibrated']
 
@@ -871,11 +880,12 @@ class WT7App(QWidget):
                 self.emit(lambda k:self.resume_tracking_after_scan(k),resume_kind)
             self.scan_stop.clear()
     def collect_power_point(self,axis,offset,dwell,nominal,target,antenna,scan_no):
-        vals=[]; end=time.monotonic()+dwell
+        vals=[]; last_sequence=getattr(self.power,'power_sequence',0); end=time.monotonic()+dwell
         while time.monotonic()<end and not self.scan_stop.is_set():
-            m=self.power.current_power_measurement(antenna)
-            if m: vals.append(m)
-            time.sleep(0.1)
+            m=self.power.current_raw_power_measurement(antenna,last_sequence)
+            if m:
+                vals.append(m); last_sequence=getattr(self.power,'power_sequence',last_sequence)
+            time.sleep(0.02)
         if not vals: raise RuntimeError('No B210 power measurements were available.')
         pos=self.positions.get(antenna); avg_val=sum(float(v['power_value']) for v in vals)/len(vals); avg_dbfs=sum(float(v['power_dbfs']) for v in vals)/len(vals)
         return {'local_time':datetime.now().astimezone().isoformat(timespec='seconds'),'antenna':antenna,'axis':axis.value,'scan_number':scan_no,'offset_degrees':offset,'nominal_az':nominal.azimuth,'nominal_el':nominal.elevation,'target_az':target.azimuth,'target_el':target.elevation,'power_value':avg_val,'power_dbfs':avg_dbfs,'power_unit':vals[-1]['power_unit'],'power_channel':vals[-1]['power_channel'],'sample_count':len(vals),'antenna_az':None if not pos else pos.azimuth,'antenna_el':None if not pos else pos.elevation,'raw_az':None if not pos else pos.raw_azimuth,'raw_el':None if not pos else pos.raw_elevation}

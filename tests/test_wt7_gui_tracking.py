@@ -122,6 +122,21 @@ dec_degrees = -80.0
         self.assertIsNone(app.power.current_power_measurement("East"))
         self.assertIsNone(app.power.current_power_measurement("West"))
 
+    def test_b210_raw_measurement_is_not_gui_smoothed(self):
+        app = self.make_app()
+        app.power.avg.setText("2")
+
+        app.power.set_reading(B210PowerReading(datetime.now(timezone.utc), -10.0, -20.0, 1024))
+        first_sequence = app.power.power_sequence
+        app.power.set_reading(B210PowerReading(datetime.now(timezone.utc), -30.0, -40.0, 1024))
+
+        smoothed = app.power.current_power_measurement("East")
+        raw = app.power.current_raw_power_measurement("East", first_sequence)
+
+        self.assertAlmostEqual(smoothed["power_dbfs"], -20.0)
+        self.assertAlmostEqual(raw["power_dbfs"], -30.0)
+        self.assertIsNone(app.power.current_raw_power_measurement("East", app.power.power_sequence))
+
 
     def test_stop_scan_clears_offset_and_stops_active_antenna(self):
         app = self.make_app()
