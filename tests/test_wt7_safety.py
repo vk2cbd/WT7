@@ -1,8 +1,9 @@
 import unittest
+import threading
 
 from types import SimpleNamespace
 
-from wt7_antenna import Direction, SafeAntenna, SafetyError, SafetyLimits, WinTrakController
+from wt7_antenna import Direction, SafeAntenna, SafetyError, SafetyLimits, WinTrakController, WinTrakProtocolError
 
 
 class SafetyLimitTests(unittest.TestCase):
@@ -44,10 +45,21 @@ class SafetyLimitTests(unittest.TestCase):
 
         controller.oled_connected("East")
 
-        self.assertEqual(len(writes), 11)
+        self.assertEqual(len(writes), 19)
+        self.assertTrue(all(width is None or width <= 9 for _prefix, _column, _row, _text, width in writes))
         self.assertIn((0xF0, 0, 0, "WT7", 8), writes)
         self.assertIn((0xF0, 0, 2, "EAST", 8), writes)
         self.assertIn((0xF0, 0, 4, "CONNECTED", 9), writes)
+
+    def test_oled_connected_failure_does_not_fail_antenna_session(self):
+        controller = object.__new__(WinTrakController)
+        controller.oled_connected = lambda _label: (_ for _ in ()).throw(WinTrakProtocolError("oled failed"))
+        antenna = object.__new__(SafeAntenna)
+        antenna.controller = controller
+        antenna.config = SimpleNamespace(name="East")
+        antenna.lock = threading.Lock()
+
+        antenna.update_oled_connected()
 
 
 if __name__ == "__main__":

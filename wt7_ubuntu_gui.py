@@ -16,7 +16,7 @@ from wt7_config import PowerConfig, ScanConfig, SourceConfig, YFactorConfig, cal
 from wt7_logging import EventLogger
 from wt7_solar import sun_equatorial, sun_position
 from wt7_state import AppStateStore, SystemRunState
-APP_VERSION = "v0.3"
+APP_VERSION = "v0.4"
 
 def hms(seconds: float) -> str:
     seconds %= 86400.0; h=int(seconds//3600); m=int((seconds%3600)//60); s=int(seconds%60); return f"{h:02d}:{m:02d}:{s:02d}"
