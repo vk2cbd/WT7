@@ -2,7 +2,7 @@ import unittest
 
 from types import SimpleNamespace
 
-from wt7_antenna import Direction, SafeAntenna, SafetyError, SafetyLimits
+from wt7_antenna import Direction, SafeAntenna, SafetyError, SafetyLimits, WinTrakController
 
 
 class SafetyLimitTests(unittest.TestCase):
@@ -37,6 +37,17 @@ class SafetyLimitTests(unittest.TestCase):
         self.assertAlmostEqual(antenna._az_target_with_low_to_high_compensation(0.6, 0.12, 45.0, True, True), 0.62)
         self.assertAlmostEqual(antenna._az_target_with_low_to_high_compensation(0.6, 0.12, 45.0, True, False), 0.12)
 
+    def test_oled_connected_uses_simple_connected_page(self):
+        controller = object.__new__(WinTrakController)
+        writes = []
+        controller.oled_write = lambda prefix, column, row, text, width=None: writes.append((prefix, column, row, text, width))
+
+        controller.oled_connected("East")
+
+        self.assertEqual(len(writes), 11)
+        self.assertIn((0xF0, 0, 0, "WT7", 8), writes)
+        self.assertIn((0xF0, 0, 2, "EAST", 8), writes)
+        self.assertIn((0xF0, 0, 4, "CONNECTED", 9), writes)
 
 
 if __name__ == "__main__":

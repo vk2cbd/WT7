@@ -16,7 +16,7 @@ from wt7_config import PowerConfig, ScanConfig, SourceConfig, YFactorConfig, cal
 from wt7_logging import EventLogger
 from wt7_solar import sun_equatorial, sun_position
 from wt7_state import AppStateStore, SystemRunState
-APP_VERSION = "v0.2"
+APP_VERSION = "v0.3"
 
 def hms(seconds: float) -> str:
     seconds %= 86400.0; h=int(seconds//3600); m=int((seconds%3600)//60); s=int(seconds%60); return f"{h:02d}:{m:02d}:{s:02d}"
@@ -582,7 +582,7 @@ class WT7App(QWidget):
         for n,_ in pending: self.cards[n].set_state('CONNECTING')
         def one(n,c):
             try:
-                s=SafeAntenna(c,self.motion_event); p=s.read_position(); s.update_oled_position(p.azimuth,p.elevation,'STOPPED'); self.emit(lambda data:self.finish_connect(*data),(n,s,p,''))
+                s=SafeAntenna(c,self.motion_event); p=s.read_position(); s.update_oled_connected(); self.emit(lambda data:self.finish_connect(*data),(n,s,p,''))
             except Exception as e: self.emit(lambda data:self.finish_connect(*data),(n,None,None,str(e)))
         for n,c in pending: self.run_thread(lambda n=n,c=c: one(n,c),f'Connect{n}')
     def finish_connect(self,name,session,pos,error):

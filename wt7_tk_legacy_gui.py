@@ -52,7 +52,7 @@ from wt7_solar import sun_equatorial, sun_position
 from wt7_state import AppStateStore, AntennaRunState, PowerRunState, SystemRunState, antenna_state_from_text
 
 
-APP_VERSION = "v0.2"
+APP_VERSION = "v0.3"
 
 
 def axis_label(axis: Axis) -> str:

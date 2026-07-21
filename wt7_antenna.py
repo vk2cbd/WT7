@@ -353,6 +353,13 @@ class WinTrakController:
     def oled_activity(self, activity: str) -> None:
         self.oled_write(0xF0, 0, 3, activity.upper(), width=8)
 
+    def oled_connected(self, label: str) -> None:
+        for row in range(8):
+            self.oled_write(0xF0, 0, row, "", width=16)
+        self.oled_write(0xF0, 0, 0, "WT7", width=8)
+        self.oled_write(0xF0, 0, 2, label.upper(), width=8)
+        self.oled_write(0xF0, 0, 4, "CONNECTED", width=9)
+
     def _move(self, axis: Axis, channel: int, speed: int) -> None:
         mapping = AXIS_MAPS[axis]
         self._set_speed(axis, mapping.positive_channel, 0)
@@ -1005,6 +1012,10 @@ class SafeAntenna:
     def update_oled_activity(self, activity: str) -> None:
         with self.lock:
             self.controller.oled_activity(activity)
+
+    def update_oled_connected(self) -> None:
+        with self.lock:
+            self.controller.oled_connected(self.config.name)
 
     def _start_direction(self, direction: Direction, speed: int) -> None:
         if direction == Direction.AZ_CW:
