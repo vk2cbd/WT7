@@ -172,6 +172,23 @@ dec_degrees = -80.0
         self.assertAlmostEqual(az_error, -0.2)
         self.assertAlmostEqual(el_error, 0.1)
 
+    def test_card_target_override_does_not_change_source_pane(self):
+        app = self.make_app()
+        hot = TargetPosition("Sun", 10.0, 20.0)
+        cold = TargetPosition("Cold Sky", 10.0, 80.0)
+        app.positions = {"East": None}
+
+        app.apply_target(hot)
+        app.set_antenna_target("East", cold)
+
+        self.assertEqual(app.current_target.name, "Sun")
+        self.assertEqual(app.source_name.text(), "Sun")
+        self.assertEqual(app.card_targets["East"].name, "Cold Sky")
+
+        app.set_antenna_target("East", None)
+
+        self.assertNotIn("East", app.card_targets)
+
 
 
 if __name__ == "__main__":

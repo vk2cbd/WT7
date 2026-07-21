@@ -498,7 +498,7 @@ PowerMeterPanel = B210Panel
 class WT7App(QWidget):
     def __init__(self,config_path):
         super().__init__(); self.config_path=Path(config_path); self.configs=load_configs(self.config_path); self.site=load_site_config(self.config_path); self.power_config=load_power_config(self.config_path); self.sources=load_sources(self.config_path); self.selected_source_name=self.site.selected_source if self.site.selected_source in self.sources else next(iter(self.sources), '')
-        self.event_log=EventLogger(Path('logs'),self.site.log_retention_days,self.site.log_level); self.state_store=AppStateStore(); self.sessions={}; self.positions={}; self.cards={}; self.current_target=None; self.tracking_kind=''; self.tracking_stop=threading.Event(); self.jog_stops={}; self.b210_stop=threading.Event(); self.b210_thread=None; self.events=queue.Queue(); self.log_handle=None; self.log_writer=None; self.scan_stop=threading.Event(); self.scan_thread=None; self.scan_antenna_name=''; self.scan_axis=None; self.scan_offset_degrees=0.0; self.scan_offset_lock=threading.Lock(); self.scan_result_dialogs=[]; self.yfactor_stop=threading.Event(); self.yfactor_thread=None; self.peak_stop=threading.Event(); self.peak_thread=None; self.tracking_nominal_az={}; self.modeless_dialogs=[]; self.active_scan_antenna=''; self.active_scan_dialog=None; self.scan_resume_kind=''
+        self.event_log=EventLogger(Path('logs'),self.site.log_retention_days,self.site.log_level); self.state_store=AppStateStore(); self.sessions={}; self.positions={}; self.cards={}; self.current_target=None; self.card_targets={}; self.tracking_kind=''; self.tracking_stop=threading.Event(); self.jog_stops={}; self.b210_stop=threading.Event(); self.b210_thread=None; self.events=queue.Queue(); self.log_handle=None; self.log_writer=None; self.scan_stop=threading.Event(); self.scan_thread=None; self.scan_antenna_name=''; self.scan_axis=None; self.scan_offset_degrees=0.0; self.scan_offset_lock=threading.Lock(); self.scan_result_dialogs=[]; self.yfactor_stop=threading.Event(); self.yfactor_thread=None; self.yfactor_hot_label=''; self.peak_stop=threading.Event(); self.peak_thread=None; self.tracking_nominal_az={}; self.modeless_dialogs=[]; self.active_scan_antenna=''; self.active_scan_dialog=None; self.scan_resume_kind=''
         self.setWindowTitle(f'WT7 ANTENNA CONTROLLER {APP_VERSION}'); self.resize(1120,780); self.setMinimumSize(1080,720); self.build_ui(); self.style_ui(); self.set_status('Load config, connect antennas, then use guarded jogs.'); self.event_log.info('APP_START',version=APP_VERSION,config=str(config_path))
         self.t_ref=QTimer(self); self.t_ref.timeout.connect(self.update_reference); self.t_ref.start(1000); self.t_evt=QTimer(self); self.t_evt.timeout.connect(self.process_events); self.t_evt.start(100); self.t_pos=QTimer(self); self.t_pos.timeout.connect(self.poll_positions); self.t_pos.start(1000)
     def build_ui(self):
@@ -748,7 +748,11 @@ class WT7App(QWidget):
         m=moon_position(self.site.latitude,self.site.longitude); return TargetPosition('Moon',m.azimuth,m.elevation)
     def apply_target(self,target):
         self.current_target=target; self.source_name.setText(target.name); self.source_az.setText(f'{target.azimuth:06.2f}'); self.source_el.setText(f'{target.elevation:06.2f}'); self.source_ha.setText(self.hour_angle(target.name))
-        for n,c in self.cards.items(): c.set_target(target,self.positions.get(n))
+        for n,c in self.cards.items(): c.set_target(self.card_targets.get(n,target),self.positions.get(n))
+    def set_antenna_target(self,name,target):
+        if target is None: self.card_targets.pop(name,None)
+        else: self.card_targets[name]=target
+        if name in self.cards: self.cards[name].set_target(self.card_targets.get(name,self.current_target),self.positions.get(name))
     def hour_angle(self,name):
         now=datetime.now(timezone.utc); lst=local_sidereal_time(self.site.longitude,now)/15.0
         if name=='Sun': ra=sun_equatorial(now).ra_hours
@@ -762,6 +766,9 @@ class WT7App(QWidget):
         if self.tracking_kind:
             try: self.apply_target(self.current_tracking_target(self.tracking_kind))
             except Exception as e: self.set_status(f'Target update fault: {e}')
+        elif self.yfactor_hot_label:
+            try: self.apply_target(self.yfactor_hot_target(self.yfactor_hot_label))
+            except Exception as e: self.set_status(f'Y Factor target update fault: {e}')
     def poll_positions(self):
         if not self.sessions: return
         def worker():
@@ -770,7 +777,7 @@ class WT7App(QWidget):
                 except Exception as e: self.emit(lambda data:self.mark_fault(*data),(n,str(e)))
         self.run_thread(worker,'Poll')
     def update_position(self,name,pos):
-        self.positions[name]=pos; c=self.cards[name]; c.set_position(pos); c.set_target(self.current_target,pos); cfg=self.configs[name]; c.set_limits_ok(cfg.limits.is_az_allowed(pos.azimuth) and cfg.limits.is_el_allowed(pos.elevation))
+        self.positions[name]=pos; c=self.cards[name]; c.set_position(pos); c.set_target(self.card_targets.get(name,self.current_target),pos); cfg=self.configs[name]; c.set_limits_ok(cfg.limits.is_az_allowed(pos.azimuth) and cfg.limits.is_el_allowed(pos.elevation))
     def mark_fault(self,name,error):
         self.cards[name].set_state('FAULT'); self.set_status(f'{name}: {error}'); self.event_log.error('ANTENNA_FAULT',antenna=name,error=error)
     def motion_event(self,event,payload): self.event_log.debug(event,payload=payload)
@@ -937,7 +944,7 @@ class WT7App(QWidget):
         if self.yfactor_thread and self.yfactor_thread.is_alive(): dialog.set_status('Y Factor already running.'); return
         if antenna not in self.sessions: dialog.set_status('Connect and select an antenna before Y Factor measurement.'); return
         if self.power.current_power_measurement(antenna) is None: dialog.set_status(f"Start B210 power and wait for CH {self.power.power_channel_for_antenna(antenna)} readings before Y Factor measurement."); return
-        self.tracking_stop.set(); self.tracking_kind=''; self.tracking_nominal_az.clear(); self.current_target=self.yfactor_hot_target(label)
+        self.tracking_stop.set(); self.tracking_kind=''; self.tracking_nominal_az.clear(); self.yfactor_hot_label=label; self.apply_target(self.yfactor_hot_target(label))
         self.yfactor_stop.clear(); dialog.set_status(f'Y Factor starting on {antenna}.'); self.set_status(f'Y Factor starting on {antenna}.')
         self.cards[antenna].set_state('YFACTOR')
         self.yfactor_thread=threading.Thread(target=lambda:self.yfactor_worker(dialog,antenna,label,cold_mode,cold_az,cold_el,cold_ra,cold_dec,count,dwell,alternate),daemon=True); self.yfactor_thread.start()
@@ -953,7 +960,8 @@ class WT7App(QWidget):
                 for phase in phases:
                     if self.yfactor_stop.is_set(): break
                     hot=self.yfactor_hot_target(label); target=self.yfactor_phase_target(phase,label,cold_mode,cold_az,cold_el,cold_ra,cold_dec)
-                    self.emit(lambda s:dialog.set_status(s),f'Measurement {i}/{count}: {phase}.'); self.emit(lambda t:self.apply_target(t),hot); self.emit(lambda data:self.cards[data[0]].set_state(data[1]),(antenna,'YFACTOR'))
+                    card_target=target if phase!='hot' else None
+                    self.emit(lambda s:dialog.set_status(s),f'Measurement {i}/{count}: {phase}.'); self.emit(lambda t:self.apply_target(t),hot); self.emit(lambda data:self.set_antenna_target(*data),(antenna,card_target)); self.emit(lambda data:self.cards[data[0]].set_state(data[1]),(antenna,'YFACTOR'))
                     start_meta=self.yfactor_slew_and_settle(session,antenna,phase,label,cold_mode,cold_az,cold_el,cold_ra,cold_dec,dialog)
                     results[phase]=self.collect_yfactor_power(antenna,dwell,session,lambda phase=phase:self.yfactor_phase_target(phase,label,cold_mode,cold_az,cold_el,cold_ra,cold_dec),start_meta)
                 if self.yfactor_stop.is_set(): break
@@ -966,7 +974,8 @@ class WT7App(QWidget):
         except Exception as exc:
             self.emit(lambda m:dialog.set_status(m),str(exc)); self.emit(lambda m:self.set_status(f'Y Factor fault: {m}'),str(exc))
         finally:
-            self.yfactor_stop.clear()
+            self.yfactor_stop.clear(); self.yfactor_hot_label=''
+            self.emit(lambda name:self.set_antenna_target(name,None),antenna)
             self.emit(lambda name:self.cards[name].set_state('STOPPED'),antenna)
     def collect_yfactor_power(self,antenna,dwell,session=None,target_func=None,start_meta=None):
         vals=[]; end=time.monotonic()+dwell
