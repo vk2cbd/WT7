@@ -83,14 +83,6 @@ class YFactorConfig:
 
 
 @dataclass
-class RtlCalibration:
-    frequency_hz: int
-    sample_rate_hz: int
-    gain_db: str
-    points_dbfs_by_dbm: dict[int, float]
-
-
-@dataclass
 class B210Calibration:
     frequency_hz: int
     sample_rate_hz: int
@@ -101,8 +93,7 @@ class B210Calibration:
     points_dbfs_by_dbm: dict[int, float]
 
 
-RTL_CAL_LEVELS_DBM = tuple(range(-40, -111, -10))
-B210_CAL_LEVELS_DBM = RTL_CAL_LEVELS_DBM
+B210_CAL_LEVELS_DBM = tuple(range(-40, -111, -10))
 
 
 def _read_parser(parser: configparser.ConfigParser, path: Path) -> None:
@@ -147,44 +138,6 @@ def load_site_config(path: Union[str, Path]) -> SiteConfig:
     )
 
 
-def load_rtl_calibration(path: Union[str, Path], frequency_hz: int, sample_rate_hz: int, gain_db: str) -> RtlCalibration:
-    path = Path(path)
-    parser = configparser.ConfigParser()
-    if path.exists():
-        _read_parser(parser, path)
-    gain_db = normalize_rtl_gain(gain_db)
-    section = _rtl_cal_section(frequency_hz, sample_rate_hz, gain_db)
-    points: dict[int, float] = {}
-    for level_dbm in RTL_CAL_LEVELS_DBM:
-        key = _rtl_cal_key(level_dbm)
-        if parser.has_option(section, key):
-            points[level_dbm] = parser.getfloat(section, key)
-    return RtlCalibration(
-        frequency_hz=frequency_hz,
-        sample_rate_hz=sample_rate_hz,
-        gain_db=gain_db,
-        points_dbfs_by_dbm=points,
-    )
-
-
-def save_rtl_calibration(path: Union[str, Path], calibration: RtlCalibration) -> None:
-    path = Path(path)
-    parser = configparser.ConfigParser()
-    if path.exists():
-        _read_parser(parser, path)
-    section = _rtl_cal_section(calibration.frequency_hz, calibration.sample_rate_hz, calibration.gain_db)
-    parser[section] = {
-        "frequency_hz": str(int(calibration.frequency_hz)),
-        "sample_rate_hz": str(int(calibration.sample_rate_hz)),
-        "gain_db": normalize_rtl_gain(calibration.gain_db),
-    }
-    for level_dbm in RTL_CAL_LEVELS_DBM:
-        if level_dbm in calibration.points_dbfs_by_dbm:
-            parser[section][_rtl_cal_key(level_dbm)] = f"{calibration.points_dbfs_by_dbm[level_dbm]:.3f}"
-    with path.open("w", encoding="utf-8") as handle:
-        parser.write(handle)
-
-
 def load_b210_calibration(
     path: Union[str, Path],
     frequency_hz: int,
@@ -204,7 +157,7 @@ def load_b210_calibration(
     section = _b210_cal_section(frequency_hz, sample_rate_hz, bandwidth_hz, gain_a_db, gain_b_db, channel)
     points: dict[int, float] = {}
     for level_dbm in B210_CAL_LEVELS_DBM:
-        key = _rtl_cal_key(level_dbm)
+        key = _calibration_level_key(level_dbm)
         if parser.has_option(section, key):
             points[level_dbm] = parser.getfloat(section, key)
     return B210Calibration(
@@ -244,12 +197,12 @@ def save_b210_calibration(path: Union[str, Path], calibration: B210Calibration) 
     }
     for level_dbm in B210_CAL_LEVELS_DBM:
         if level_dbm in calibration.points_dbfs_by_dbm:
-            parser[section][_rtl_cal_key(level_dbm)] = f"{calibration.points_dbfs_by_dbm[level_dbm]:.3f}"
+            parser[section][_calibration_level_key(level_dbm)] = f"{calibration.points_dbfs_by_dbm[level_dbm]:.3f}"
     with path.open("w", encoding="utf-8") as handle:
         parser.write(handle)
 
 
-def calibrated_dbm_from_dbfs(calibration: RtlCalibration, power_dbfs: float) -> tuple[float, bool] | None:
+def calibrated_dbm_from_dbfs(calibration: B210Calibration, power_dbfs: float) -> tuple[float, bool] | None:
     points = sorted((dbfs, dbm) for dbm, dbfs in calibration.points_dbfs_by_dbm.items())
     if not points:
         return None
@@ -275,10 +228,6 @@ def _interpolate_calibration(lower: tuple[float, int], upper: tuple[float, int],
     return lower_dbm + fraction * (upper_dbm - lower_dbm)
 
 
-def _rtl_cal_section(frequency_hz: int, sample_rate_hz: int, gain_db: str) -> str:
-    return f"rtl_cal:{int(frequency_hz)}:{int(sample_rate_hz)}:{_rtl_gain_key_part(gain_db)}"
-
-
 def _b210_cal_section(
     frequency_hz: int,
     sample_rate_hz: int,
@@ -289,7 +238,7 @@ def _b210_cal_section(
 ) -> str:
     return (
         f"b210_cal:{int(frequency_hz)}:{int(sample_rate_hz)}:{int(bandwidth_hz)}:"
-        f"a{_rtl_gain_key_part(gain_a_db)}:b{_rtl_gain_key_part(gain_b_db)}:ch{normalize_power_channel(channel)}"
+        f"a{_calibration_key_part(gain_a_db)}:b{_calibration_key_part(gain_b_db)}:ch{normalize_power_channel(channel)}"
     )
 
 
@@ -304,18 +253,11 @@ def normalize_b210_gain(gain_db: str) -> str:
     return f"{value:g}"
 
 
-def normalize_rtl_gain(gain_db: str) -> str:
-    text = str(gain_db).strip().lower()
-    if text in ("", "auto", "0"):
-        return "auto"
-    return f"{float(text):0.1f}"
+def _calibration_key_part(gain_db: str) -> str:
+    return normalize_b210_gain(gain_db).replace("-", "m").replace(".", "p")
 
 
-def _rtl_gain_key_part(gain_db: str) -> str:
-    return normalize_rtl_gain(gain_db).replace("-", "m").replace(".", "p")
-
-
-def _rtl_cal_key(level_dbm: int) -> str:
+def _calibration_level_key(level_dbm: int) -> str:
     return f"dbm_{level_dbm}"
 
 

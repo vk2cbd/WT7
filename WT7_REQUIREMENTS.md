@@ -14,7 +14,7 @@ diagnostics, and a more usable GUI.
 - Make long-drive behaviour explainable, especially East/West differences.
 - Provide a cleaner, instrument-like GUI with clear normal/abnormal colour
   states.
-- Support tracking, calibration, RTL power measurement, scan calibration, and
+- Support tracking, calibration, B210 power measurement, scan calibration, and
   Y factor measurement.
 - Preserve all field-proven behaviours from WT4 unless deliberately changed.
 
@@ -40,7 +40,7 @@ WT7 should be split into clear modules. Suggested structure:
 - `wt7_antenna.py`: one antenna session, position reads, OLED writes, guarded
   moves.
 - `wt7_tracking.py`: Sun, Moon, and source tracking logic.
-- `wt7_power.py`: RTL-SDR power meter and RTL calibration.
+- `wt7_b210_power.py`: B210 dual-channel power meter and B210 calibration.
 - `wt7_calibration.py`: manual calibration, peak calibration, scan calibration,
   Gaussian fitting, Y factor.
 - `wt7_config.py`: INI configuration load/save and defaults.
@@ -250,33 +250,32 @@ Stop reasons should be explicit, for example:
 - Stop Scan must interrupt the scan, clear offsets, return to nominal tracking,
   and leave the app ready for another action.
 
-## RTL Power Meter Requirements
+## B210 Power Meter Requirements
 
-- Use RTL-SDR as a power meter.
-- Explicitly disable RTL AGC where supported.
-- Use manual tuner gain when gain is numeric.
-- Flag automatic gain as uncalibrated.
+- Use the B210 as the WT7 power measurement backend.
+- Support two-channel power measurement so East and West receiver chains can be monitored together.
+- Configure gain A and gain B independently.
+- Configure clock source and B210 device arguments.
+- Flag readings as uncalibrated unless they match a stored B210 calibration.
 - Support:
   - frequency in MHz
   - sample rate in ksps
-  - gain
-  - PPM correction
-  - samples in kilosamples
+  - measurement bandwidth in kHz
+  - gain A and gain B
   - GUI refresh rate
   - averaging
-  - warm-up seconds
 - Power display should use one decimal place.
-- On stop, stale power should not remain as if live.
+- On SDR release, stale power should not remain as if live.
 - Settings should persist across app restarts.
 - Calibration table should support signal generator calibration from -40 dBm to
   -110 dBm.
-- Calibrated readings should display in dBm when frequency, sample rate, and
-  gain match the stored calibration.
+- Calibrated readings should display in dBm when frequency, sample rate,
+  bandwidth, gains, and channel match the stored calibration.
 - If calibration does not match, readings should be flagged as uncalibrated.
 
 ## Y Factor Requirements
 
-- Y Factor is a hot/cold power measurement using RTL power.
+- Y Factor is a hot/cold power measurement using B210 power.
 - Select one antenna for the measurement.
 - The non-selected antenna must be stopped.
 - Hot target options:
@@ -369,7 +368,7 @@ WT7 needs both event logging and measurement logging.
   - park start/stop/fault
   - scan start/stop/fault
   - Y factor start/stop/fault
-  - RTL start/stop/fault
+  - B210 start/stop/fault
   - calibration changes
   - safety stops
   - controller offline events
@@ -424,7 +423,7 @@ Unit tests should cover:
 9. Add event logging.
 10. Add park.
 11. Add calibration workflows.
-12. Add RTL power meter.
+12. Add B210 power meter.
 13. Add scan calibration.
 14. Add Y factor.
 15. Polish GUI colours and layout.
@@ -439,8 +438,6 @@ Unit tests should cover:
 
 ## Open Questions
 
-- Should WT7 support both RTL-SDR and SDRplay in the first clean rebuild, or
-  defer SDRplay until WT7 is stable?
 - Should Y factor cold-sky presets be persisted in the INI?
 - Should long-slew segmentation size be configurable globally or per antenna?
 - Should hysteresis compensation eventually be direction-dependent calibration

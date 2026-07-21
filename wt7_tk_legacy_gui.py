@@ -20,8 +20,6 @@ from wt7_config import (
     B210Calibration,
     B210_CAL_LEVELS_DBM,
     PowerConfig,
-    RtlCalibration,
-    RTL_CAL_LEVELS_DBM,
     ScanConfig,
     SiteConfig,
     SourceConfig,
@@ -30,16 +28,13 @@ from wt7_config import (
     load_configs,
     load_b210_calibration,
     load_power_config,
-    load_rtl_calibration,
     load_scan_config,
     load_site_config,
     load_sources,
     load_yfactor_config,
-    normalize_rtl_gain,
     save_b210_calibration,
     save_configs,
     save_power_config,
-    save_rtl_calibration,
     save_scan_config,
     save_site_config,
     save_sources,
@@ -52,7 +47,7 @@ from wt7_solar import sun_equatorial, sun_position
 from wt7_state import AppStateStore, AntennaRunState, PowerRunState, SystemRunState, antenna_state_from_text
 
 
-APP_VERSION = "v0.4"
+APP_VERSION = "v0.5"
 
 
 def axis_label(axis: Axis) -> str:
@@ -2405,147 +2400,6 @@ class B210CalibrationDialog(tk.Toplevel):
         self.destroy()
 
 
-class RtlCalibrationDialog(tk.Toplevel):
-    LEVELS_DBM = RTL_CAL_LEVELS_DBM
-
-    def __init__(self, app: "WT7App") -> None:
-        super().__init__(app)
-        self.app = app
-        self.title("RTL Calibration")
-        self.resizable(False, False)
-        self.transient(app)
-        self.grab_set()
-        self.frequency_var = tk.StringVar(value=app.power_panel.freq_var.get())
-        self.sample_rate_var = tk.StringVar(value=app.power_panel.rate_var.get())
-        self.gain_var = tk.StringVar(value=app.power_panel.gain_var.get())
-        self.status_var = tk.StringVar(value="Set signal source level, then capture each row.")
-        self.level_vars: dict[int, tk.StringVar] = {level: tk.StringVar(value="--") for level in self.LEVELS_DBM}
-
-        body = ttk.Frame(self, padding=10)
-        body.grid(row=0, column=0, sticky="nsew")
-        ttk.Label(body, text="Frequency MHz").grid(row=0, column=0, sticky="w", pady=2)
-        ttk.Entry(body, textvariable=self.frequency_var, width=10).grid(row=0, column=1, sticky="w", pady=2)
-        ttk.Label(body, text="Sample ksps").grid(row=1, column=0, sticky="w", pady=2)
-        ttk.Entry(body, textvariable=self.sample_rate_var, width=10).grid(row=1, column=1, sticky="w", pady=2)
-        ttk.Label(body, text="Gain").grid(row=2, column=0, sticky="w", pady=2)
-        ttk.Entry(body, textvariable=self.gain_var, width=10).grid(row=2, column=1, sticky="w", pady=2)
-        ttk.Button(body, text="Load", command=self.load_frequency).grid(row=0, column=2, rowspan=3, sticky="nsw", padx=(6, 0), pady=2)
-
-        table = ttk.Frame(body)
-        table.grid(row=3, column=0, columnspan=3, sticky="ew", pady=(8, 0))
-        ttk.Label(table, text="Source dBm").grid(row=0, column=0, sticky="w", padx=(0, 12))
-        ttk.Label(table, text="Measured dBFS").grid(row=0, column=1, sticky="w", padx=(0, 12))
-        for row, level in enumerate(self.LEVELS_DBM, start=1):
-            ttk.Label(table, text=f"{level:d}").grid(row=row, column=0, sticky="w", pady=2)
-            ttk.Label(table, textvariable=self.level_vars[level], width=10).grid(row=row, column=1, sticky="w", pady=2)
-            ttk.Button(table, text="Capture", command=lambda l=level: self.capture_level(l)).grid(
-                row=row, column=2, sticky="ew", pady=2
-            )
-
-        ttk.Label(body, textvariable=self.status_var, foreground="red", wraplength=360).grid(
-            row=4, column=0, columnspan=3, sticky="ew", pady=(8, 0)
-        )
-        buttons = ttk.Frame(self, padding=(10, 0, 10, 10))
-        buttons.grid(row=1, column=0, sticky="ew")
-        ttk.Button(buttons, text="Save", command=self.save).pack(side="left")
-        ttk.Button(buttons, text="Close", command=self.close).pack(side="right")
-        self.protocol("WM_DELETE_WINDOW", self.close)
-        self.load_frequency()
-
-    def frequency_hz(self) -> int:
-        return int(round(float(self.frequency_var.get()) * 1_000_000))
-
-    def sample_rate_hz(self) -> int:
-        return int(round(float(self.sample_rate_var.get()) * 1000))
-
-    def gain_text(self) -> str:
-        return normalize_rtl_gain(self.gain_var.get())
-
-    def load_frequency(self) -> None:
-        try:
-            calibration = load_rtl_calibration(
-                self.app.config_path,
-                self.frequency_hz(),
-                self.sample_rate_hz(),
-                self.gain_text(),
-            )
-        except ValueError:
-            self.status_var.set("Frequency, sample rate, and gain must be valid.")
-            return
-        for level in self.LEVELS_DBM:
-            value = calibration.points_dbfs_by_dbm.get(level)
-            self.level_vars[level].set(f"{value:0.2f}" if value is not None else "--")
-        self.status_var.set(
-            f"Loaded calibration for {calibration.frequency_hz / 1_000_000:0.1f} MHz, "
-            f"{calibration.sample_rate_hz / 1000:0.0f} ksps, gain {calibration.gain_db}."
-        )
-
-    def capture_level(self, level_dbm: int) -> None:
-        power = self.app.power_panel.latest_power_dbfs
-        if power is None:
-            self.status_var.set("Start B210 power and wait for a reading before capture.")
-            return
-        if self.app.power_panel.is_warming():
-            self.status_var.set("B210 power meter is still warming; wait for Ready before capture.")
-            return
-        self.level_vars[level_dbm].set(f"{power:0.2f}")
-        self.status_var.set(f"Captured {level_dbm:d} dBm as {power:0.2f} dBFS.")
-
-    def save(self) -> None:
-        try:
-            frequency_hz = self.frequency_hz()
-            sample_rate_hz = self.sample_rate_hz()
-            gain_db = self.gain_text()
-            points = self.points_from_fields()
-        except ValueError as exc:
-            self.status_var.set(str(exc))
-            return
-        if len(points) < 2:
-            self.status_var.set("Capture at least two calibration points before saving.")
-            return
-        if gain_db == "auto":
-            self.status_var.set("Use a fixed numeric RTL gain before saving calibration.")
-            return
-        save_rtl_calibration(
-            self.app.config_path,
-            RtlCalibration(
-                frequency_hz=frequency_hz,
-                sample_rate_hz=sample_rate_hz,
-                gain_db=gain_db,
-                points_dbfs_by_dbm=points,
-            ),
-        )
-        self.app.power_panel.active_calibrations = self.app.power_panel.load_active_calibrations(self.app.power_config)
-        self.app.event_log.info(
-            "RTL_CAL_SAVE",
-            frequency_hz=frequency_hz,
-            sample_rate_hz=sample_rate_hz,
-            gain=gain_db,
-            points=len(points),
-        )
-        self.status_var.set(
-            f"Saved {len(points)} points at {frequency_hz / 1_000_000:0.1f} MHz, "
-            f"{sample_rate_hz / 1000:0.0f} ksps, gain {gain_db}."
-        )
-
-    def points_from_fields(self) -> dict[int, float]:
-        points: dict[int, float] = {}
-        for level, variable in self.level_vars.items():
-            text = variable.get().strip()
-            if text in ("", "--"):
-                continue
-            try:
-                points[level] = float(text)
-            except ValueError as exc:
-                raise ValueError(f"{level:d} dBm reading must be numeric.") from exc
-        return points
-
-    def close(self) -> None:
-        if self.app.rtl_calibration_dialog is self:
-            self.app.rtl_calibration_dialog = None
-        self.destroy()
-
-
 class ScanCalibrationDialog(tk.Toplevel):
     def __init__(self, app: "WT7App") -> None:
         super().__init__(app)
@@ -3067,7 +2921,6 @@ class WT7App(tk.Tk):
         self.peak_calibration_dialog: Optional[PeakCalibrationDialog] = None
         self.scan_dialog: Optional[ScanCalibrationDialog] = None
         self.yfactor_dialog: Optional[YFactorDialog] = None
-        self.rtl_calibration_dialog: Optional[RtlCalibrationDialog] = None
         self.b210_calibration_dialog: Optional[B210CalibrationDialog] = None
 
         self.status_var = tk.StringVar(value="Load config, connect antennas, then use guarded jogs.")
@@ -4905,12 +4758,6 @@ class WT7App(tk.Tk):
             self.yfactor_dialog.lift()
             return
         self.yfactor_dialog = YFactorDialog(self)
-
-    def open_rtl_calibration(self) -> None:
-        if self.rtl_calibration_dialog and self.rtl_calibration_dialog.winfo_exists():
-            self.rtl_calibration_dialog.lift()
-            return
-        self.rtl_calibration_dialog = RtlCalibrationDialog(self)
 
     def open_b210_calibration(self) -> None:
         if self.b210_calibration_dialog and self.b210_calibration_dialog.winfo_exists():

@@ -561,7 +561,7 @@ This section consolidates the requirements discussed during development.
 - The app shall flag uncalibrated B210 readings when no matching calibration is loaded.
 - The app shall clear displayed power when the SDR is released.
 - The app shall handle B210 overflow and timeout faults clearly.
-- The app shall avoid trying to use the old RTL-SDR path for B210 functions.
+- The app shall use the B210 path for power measurement; the old RTL-SDR backend is not part of WT7.
 - The app shall support one-channel-at-a-time B210 calibration.
 - B210 logs shall clearly indicate when logging starts and stops.
 
