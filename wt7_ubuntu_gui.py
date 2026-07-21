@@ -12,11 +12,11 @@ from PyQt5.QtWidgets import QApplication, QCheckBox, QComboBox, QDialog, QDialog
 from wt7_antenna import Axis, Direction, Position, SafeAntenna, shortest_angle_delta
 from wt7_astro import TargetPosition, local_sidereal_time, moon_equatorial, moon_position, source_position
 from wt7_b210_power import B210PowerMeter, B210PowerMeterConfig, B210PowerReading
-from wt7_config import PowerConfig, ScanConfig, SourceConfig, YFactorConfig, calibrated_dbm_from_dbfs, load_configs, load_power_config, load_scan_config, load_site_config, load_sources, load_yfactor_config, save_configs, save_power_config, save_scan_config, save_site_config, save_sources, save_yfactor_config
+from wt7_config import B210Calibration, B210_CAL_LEVELS_DBM, PowerConfig, ScanConfig, SourceConfig, YFactorConfig, calibrated_dbm_from_dbfs, load_b210_calibration, load_configs, load_power_config, load_scan_config, load_site_config, load_sources, load_yfactor_config, save_b210_calibration, save_configs, save_power_config, save_scan_config, save_site_config, save_sources, save_yfactor_config
 from wt7_logging import EventLogger
 from wt7_solar import sun_equatorial, sun_position
 from wt7_state import AppStateStore, SystemRunState
-APP_VERSION = "v0.5"
+APP_VERSION = "v0.6"
 
 def hms(seconds: float) -> str:
     seconds %= 86400.0; h=int(seconds//3600); m=int((seconds%3600)//60); s=int(seconds%60); return f"{h:02d}:{m:02d}:{s:02d}"
@@ -92,16 +92,27 @@ class B210Panel(Panel):
         actions_row.addStretch(1)
         gap=QWidget(); gap.setFixedHeight(28); bottom_gap=QWidget(); bottom_gap.setFixedHeight(12)
         main.addLayout(top); main.addWidget(gap); main.addLayout(params_row); main.addLayout(actions_row); main.addWidget(bottom_gap)
-        self.a_hist=[]; self.b_hist=[]; self.latest_raw_a_dbfs=None; self.latest_raw_b_dbfs=None; self.power_sequence=0
+        self.a_hist=[]; self.b_hist=[]; self.latest_raw_a_dbfs=None; self.latest_raw_b_dbfs=None; self.latest_power_dbfs=None; self.latest_power_b_dbfs=None; self.active_calibrations={}; self.power_sequence=0
     def meter_config(self):
         return B210PowerMeterConfig(center_frequency_hz=int(float(self.freq.text())*1_000_000), sample_rate_hz=int(float(self.rate.text())*1000), measurement_bandwidth_hz=int(float(self.bw.text())*1000), update_rate_hz=float(self.gui_hz.text()), gain_a_db=float(self.gain_a.text()), gain_b_db=float(self.gain_b.text()), clock_source=self.clock.text().strip() or 'internal', device_args=self.power.b210_device_args)
     def save_config(self):
         self.power.center_frequency_hz=int(float(self.freq.text())*1_000_000); self.power.sample_rate_hz=int(float(self.rate.text())*1000); self.power.measurement_bandwidth_hz=int(float(self.bw.text())*1000); self.power.update_rate_hz=float(self.gui_hz.text()); self.power.gain_db=self.gain_a.text(); self.power.gain_b_db=self.gain_b.text(); self.power.smoothing_samples=max(1,int(float(self.avg.text()))); self.power.clock_source=self.clock.text().strip() or 'internal'; return self.power
+    def load_active_calibrations(self, config_path: Path, power: PowerConfig) -> dict[str, B210Calibration]:
+        calibrations={}
+        for channel in ('A','B'):
+            cal=load_b210_calibration(config_path,power.center_frequency_hz,power.sample_rate_hz,power.measurement_bandwidth_hz,power.gain_db,power.gain_b_db,channel)
+            if len(cal.points_dbfs_by_dbm) >= 2:
+                calibrations[channel]=cal
+        self.active_calibrations=calibrations
+        return calibrations
     def set_reading(self,r:B210PowerReading):
         self.latest_raw_a_dbfs=float(r.power_a_dbfs); self.latest_raw_b_dbfs=float(r.power_b_dbfs); self.power_sequence+=1
         keep=max(1,int(float(self.avg.text() or '1'))); self.a_hist=(self.a_hist+[r.power_a_dbfs])[-keep:]; self.b_hist=(self.b_hist+[r.power_b_dbfs])[-keep:]; aa=sum(self.a_hist)/len(self.a_hist); bb=sum(self.b_hist)/len(self.b_hist)
         self.latest_power_dbfs=aa; self.latest_power_b_dbfs=bb; self.active_calibrations=getattr(self,'active_calibrations',{})
-        self.a_val.setText(f'{aa:0.1f}'); self.b_val.setText(f'{bb:0.1f}')
+        ma=self.measurement_from_dbfs('East','A',aa,len(self.a_hist)); mb=self.measurement_from_dbfs('West','B',bb,len(self.b_hist))
+        self.a_val.setText(f"{float(ma['power_value']):0.1f}"); self.b_val.setText(f"{float(mb['power_value']):0.1f}")
+        self.a_unit.setText(str(ma['power_unit'])); self.b_unit.setText(str(mb['power_unit']))
+        self.status.setText('SDR POWER ON CAL' if ma['power_calibrated'] or mb['power_calibrated'] else 'SDR POWER ON UNCAL')
     def clear_reading(self,status='SDR RELEASED'):
         self.a_hist=[]; self.b_hist=[]; self.latest_power_dbfs=None; self.latest_power_b_dbfs=None; self.latest_raw_a_dbfs=None; self.latest_raw_b_dbfs=None; self.power_sequence=0
         self.a_val.setText('--.-'); self.b_val.setText('--.-'); self.a_unit.setText('dBFS'); self.b_unit.setText('dBFS'); self.status.setText(status)
@@ -291,6 +302,71 @@ class TrackingDialog(SimpleDialog):
                 cfg=self.app.configs[name]; cfg.gui_speed=self.to_int(f['gui_speed'],'Manual speed'); cfg.az_track_speed=self.to_int(f['az_track_speed'],'AZ speed'); cfg.el_track_speed=self.to_int(f['el_track_speed'],'EL speed'); cfg.az_low_to_high_compensation=self.to_float(f['az_low_to_high_compensation'],'AZ L-H comp')
             save_site_config(self.app.config_path,self.app.site); save_configs(self.app.config_path,self.app.configs); self.app.set_status('Tracking settings saved.'); super().accept()
         except Exception as exc: self.fail(exc)
+
+class B210CalibrationDialog(SimpleDialog):
+    LEVELS_DBM=B210_CAL_LEVELS_DBM
+    def __init__(self,app):
+        super().__init__(app,'B210 Calibration')
+        g=QGridLayout(); self.main.addLayout(g)
+        self.freq=edit(app.power.freq.text(),74); self.rate=edit(app.power.rate.text(),62); self.bw=edit(app.power.bw.text(),62); self.gain_a=edit(app.power.gain_a.text(),48); self.gain_b=edit(app.power.gain_b.text(),48)
+        self.channel=QComboBox(); self.channel.addItems(['A','B'])
+        fields=[('Freq MHz',self.freq),('Rate ksps',self.rate),('BW kHz',self.bw),('Gain A',self.gain_a),('Gain B',self.gain_b),('Cal channel',self.channel)]
+        for i,(label,widget) in enumerate(fields):
+            g.addWidget(lbl(label),i//3,(i%3)*2); g.addWidget(widget,i//3,(i%3)*2+1)
+        load_btn=btn('Load'); load_btn.clicked.connect(self.load_calibration); g.addWidget(load_btn,0,6,2,1)
+        self.table=QTableWidget(len(self.LEVELS_DBM),4); self.table.setHorizontalHeaderLabels(['Source dBm','CH A dBFS','CH B dBFS','Capture'])
+        for row,level in enumerate(self.LEVELS_DBM):
+            self.table.setItem(row,0,QTableWidgetItem(str(level)))
+            self.table.setItem(row,1,QTableWidgetItem('--'))
+            self.table.setItem(row,2,QTableWidgetItem('--'))
+            capture=btn('Capture Selected'); capture.clicked.connect(lambda _checked=False,l=level:self.capture_level(l)); self.table.setCellWidget(row,3,capture)
+        self.table.setMinimumSize(430,300); self.main.addWidget(self.table)
+        self.status=lbl('Select channel, set signal generator level, then capture each row.','faultTag'); self.main.addWidget(self.status)
+        row=QHBoxLayout(); save=btn('Save Selected'); close=btn('Close'); save.clicked.connect(self.save_selected); close.clicked.connect(self.accept); row.addWidget(save); row.addStretch(1); row.addWidget(close); self.main.addLayout(row)
+        self.load_calibration()
+    def set_status(self,text): self.status.setText(text)
+    def frequency_hz(self): return int(round(float(self.freq.text())*1_000_000))
+    def sample_rate_hz(self): return int(round(float(self.rate.text())*1000))
+    def bandwidth_hz(self): return int(round(float(self.bw.text())*1000))
+    def selected_channel(self): return 'B' if self.channel.currentText().strip().upper() == 'B' else 'A'
+    def _col(self,channel): return 2 if channel == 'B' else 1
+    def load_calibration(self):
+        try:
+            for channel in ('A','B'):
+                cal=load_b210_calibration(self.app.config_path,self.frequency_hz(),self.sample_rate_hz(),self.bandwidth_hz(),self.gain_a.text(),self.gain_b.text(),channel)
+                col=self._col(channel)
+                for row,level in enumerate(self.LEVELS_DBM):
+                    value=cal.points_dbfs_by_dbm.get(level)
+                    self.table.setItem(row,col,QTableWidgetItem(f'{value:0.2f}' if value is not None else '--'))
+            self.set_status('Loaded B210 calibration records.')
+        except Exception as exc:
+            self.set_status(f'Calibration load fault: {exc}')
+    def capture_level(self,level_dbm):
+        channel=self.selected_channel()
+        power=getattr(self.app.power,'latest_power_b_dbfs',None) if channel == 'B' else getattr(self.app.power,'latest_power_dbfs',None)
+        if power is None:
+            self.set_status(f'Start B210 power and wait for CH {channel} readings before capture.'); return
+        row=list(self.LEVELS_DBM).index(level_dbm); self.table.setItem(row,self._col(channel),QTableWidgetItem(f'{power:0.2f}'))
+        self.set_status(f'Captured {level_dbm:d} dBm for CH {channel}: {power:0.2f} dBFS.')
+    def points_from_table(self,channel):
+        points={}; col=self._col(channel)
+        for row,level in enumerate(self.LEVELS_DBM):
+            item=self.table.item(row,col); text=(item.text() if item else '').strip()
+            if text and text != '--': points[level]=float(text)
+        return points
+    def save_selected(self):
+        try:
+            channel=self.selected_channel(); points=self.points_from_table(channel)
+            if len(points) < 2:
+                self.set_status(f'Capture at least two calibration points for CH {channel} before saving.'); return
+            calibration=B210Calibration(self.frequency_hz(),self.sample_rate_hz(),self.bandwidth_hz(),self.gain_a.text().strip(),self.gain_b.text().strip(),channel,points)
+            save_b210_calibration(self.app.config_path,calibration)
+            self.app.power_config=self.app.power.save_config()
+            self.app.power.load_active_calibrations(self.app.config_path,self.app.power_config)
+            self.app.event_log.info('B210_CAL_SAVE',frequency_hz=calibration.frequency_hz,sample_rate_hz=calibration.sample_rate_hz,bandwidth_hz=calibration.bandwidth_hz,gain_a=calibration.gain_a_db,gain_b=calibration.gain_b_db,channel=channel,points=len(points))
+            self.set_status(f'Saved B210 calibration: CH {channel} {len(points)} points.')
+        except Exception as exc:
+            self.set_status(f'Calibration save fault: {exc}')
 
 class SourcesDialog(SimpleDialog):
     NAME_COL=0; RA_COL=1; DEC_COL=2; AZ_COL=3; EL_COL=4; FLUX_COL=5
@@ -525,7 +601,7 @@ class WT7App(QWidget):
         self.status=lbl('')
         for name in self.configs:
             card=AntennaCard(name); card.jog_pressed.connect(self.start_jog); card.jog_released.connect(self.stop_jog); card.stop_clicked.connect(self.stop_antenna); self.cards[name]=card; main.addWidget(card)
-        self.power=B210Panel(self.power_config); self.power.app=self; self.power.start_clicked.connect(self.start_b210); self.power.stop_clicked.connect(self.stop_b210); self.power.cal_clicked.connect(lambda:self.info('B210 calibration capture remains in wt7_tk_legacy_gui.py during the PyQt transition.')); self.power.log_start_clicked.connect(self.start_b210_log); self.power.log_stop_clicked.connect(self.stop_b210_log); main.addWidget(self.power)
+        self.power=B210Panel(self.power_config); self.power.app=self; self.power.load_active_calibrations(self.config_path,self.power_config); self.power.start_clicked.connect(self.start_b210); self.power.stop_clicked.connect(self.stop_b210); self.power.cal_clicked.connect(self.open_b210_calibration); self.power.log_start_clicked.connect(self.start_b210_log); self.power.log_stop_clicked.connect(self.stop_b210_log); main.addWidget(self.power)
         ev=Panel(); ev.setMinimumHeight(82); eg=QGridLayout(ev); eg.setContentsMargins(9,8,9,8); eg.addWidget(bold('RECENT EVENTS'),0,0); ob=btn('Open Log'); ob.clicked.connect(self.open_log_hint); eg.addWidget(ob,0,3,Qt.AlignRight); self.ev1=lbl('--'); self.ev2=lbl('--','muted'); eg.addWidget(self.ev1,1,0,1,4); eg.addWidget(self.ev2,2,0,1,4); main.addWidget(ev); main.addStretch(1)
     def style_ui(self):
         self.setStyleSheet("""
@@ -561,7 +637,6 @@ class WT7App(QWidget):
         if hasattr(self,'ev1'): self.ev1.setText(f"{datetime.now().strftime('%H:%M:%S')}  {msg}")
         self.state_store.set_status(msg,SystemRunState.IDLE)
     def info(self,msg): QMessageBox.information(self,'WT7',msg)
-    def not_ported(self): self.info('This WT7 PyQt5 version currently ports the main control surface. Secondary dialogs are still available in wt7_tk_legacy_gui.py during transition.')
     def open_log_hint(self): self.info('Event logs are in the logs directory beside the app.')
     def open_limits(self): LimitsDialog(self).exec_()
     def open_observer(self): ObserverDialog(self).exec_()
@@ -574,6 +649,7 @@ class WT7App(QWidget):
     def open_encoders_dialog(self): EncodersDialog(self).exec_()
     def open_power_dialog(self): PowerSettingsDialog(self).exec_()
     def open_peak_calibration(self): PeakCalibrationDialog(self).exec_()
+    def open_b210_calibration(self): B210CalibrationDialog(self).exec_()
     def run_thread(self,fn,name='WT7Worker'): threading.Thread(target=fn,name=name,daemon=True).start()
     def connect_all(self):
         pending=[(n,c) for n,c in self.configs.items() if n not in self.sessions]
@@ -1011,7 +1087,7 @@ class WT7App(QWidget):
         except Exception as exc: dialog.set_status(str(exc))
     def start_b210(self):
         if self.b210_thread and self.b210_thread.is_alive(): self.set_status('B210 already running.'); return
-        try: cfg=self.power.meter_config(); self.power_config=self.power.save_config(); save_power_config(self.config_path,self.power_config)
+        try: cfg=self.power.meter_config(); self.power_config=self.power.save_config(); save_power_config(self.config_path,self.power_config); self.power.load_active_calibrations(self.config_path,self.power_config)
         except Exception as e: self.set_status(f'B210 config fault: {e}'); return
         self.b210_stop.clear(); self.power.clear_reading('SDR POWER ON UNCAL')
         def worker():
