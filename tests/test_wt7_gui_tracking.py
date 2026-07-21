@@ -21,6 +21,9 @@ class _FakeLimits:
         if elevation < 0.0:
             raise RuntimeError(f"Elevation {elevation:0.2f} outside limits")
 
+    def azimuth_delta_to_target(self, current, target):
+        return ((target - current + 540.0) % 360.0) - 180.0
+
 
 class _FakeSession:
     def __init__(self):
@@ -154,6 +157,20 @@ dec_degrees = -80.0
         self.assertEqual(app.scan_antenna_name, "")
         self.assertIsNone(app.scan_axis)
         self.assertEqual(app.scan_offset_degrees, 0.0)
+
+    def test_yfactor_phase_target_and_error_helpers(self):
+        app = self.make_app()
+        session = _FakeSession()
+        app.yfactor_hot_target = lambda label: TargetPosition(label, 359.9, 45.0)
+
+        hot = app.yfactor_phase_target("hot", "Sun", "AZ/EL", 12.0, 80.0, 0.0, 0.0)
+        cold = app.yfactor_phase_target("cold", "Sun", "AZ/EL", 12.0, 80.0, 0.0, 0.0)
+        az_error, el_error = app.yfactor_position_error(session, SimpleNamespace(azimuth=0.1, elevation=44.9), hot)
+
+        self.assertEqual((hot.azimuth, hot.elevation), (359.9, 45.0))
+        self.assertEqual((cold.azimuth, cold.elevation), (12.0, 80.0))
+        self.assertAlmostEqual(az_error, -0.2)
+        self.assertAlmostEqual(el_error, 0.1)
 
 
 

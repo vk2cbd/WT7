@@ -913,6 +913,26 @@ class WT7App(QWidget):
         if mode == 'Moon AZ / EL 80': m=self.target_for_kind('moon'); return TargetPosition('Cold Sky',m.azimuth,80.0)
         if mode in ('AZ/EL','AZ / EL'): return TargetPosition('Cold Sky',az,el)
         return source_position('Cold Sky',ra,dec,self.site.latitude,self.site.longitude)
+    def yfactor_phase_target(self,phase,label,cold_mode,cold_az,cold_el,cold_ra,cold_dec):
+        hot=self.yfactor_hot_target(label)
+        return hot if phase=='hot' else self.yfactor_cold_target(cold_mode,hot,cold_az,cold_el,cold_ra,cold_dec)
+    def yfactor_phase_target_tuple(self,phase,label,cold_mode,cold_az,cold_el,cold_ra,cold_dec):
+        target=self.yfactor_phase_target(phase,label,cold_mode,cold_az,cold_el,cold_ra,cold_dec)
+        return target.azimuth,target.elevation
+    def yfactor_position_error(self,session,pos,target):
+        return session.config.limits.azimuth_delta_to_target(pos.azimuth,target.azimuth), target.elevation-pos.elevation
+    def yfactor_slew_and_settle(self,session,antenna,phase,label,cold_mode,cold_az,cold_el,cold_ra,cold_dec,dialog):
+        last={}
+        for attempt in range(1,4):
+            target=self.yfactor_phase_target(phase,label,cold_mode,cold_az,cold_el,cold_ra,cold_dec)
+            session.guarded_slew_to(target.azimuth,target.elevation,session.config.az_track_speed,session.config.el_track_speed,self.yfactor_stop,self.az_tol(),self.el_tol(),self.site.az_stop_tolerance_degrees,self.site.el_stop_tolerance_degrees,self.site.az_slow_speed,self.site.el_slow_speed,self.site.az_slow_threshold_degrees,self.site.el_slow_threshold_degrees,lambda p:self.emit(lambda data:self.update_position(*data),(antenna,p)),target_callback=(lambda _p, phase=phase: self.yfactor_phase_target_tuple(phase,label,cold_mode,cold_az,cold_el,cold_ra,cold_dec)))
+            pos=session.read_position(); self.emit(lambda data:self.update_position(*data),(antenna,pos))
+            target=self.yfactor_phase_target(phase,label,cold_mode,cold_az,cold_el,cold_ra,cold_dec); az_err,el_err=self.yfactor_position_error(session,pos,target)
+            last={'target_az':target.azimuth,'target_el':target.elevation,'antenna_az':pos.azimuth,'antenna_el':pos.elevation,'az_error':az_err,'el_error':el_err,'settle_attempts':attempt}
+            if abs(az_err) <= self.az_tol() and abs(el_err) <= self.el_tol(): return last
+            if self.yfactor_stop.is_set(): return last
+            self.emit(lambda s:dialog.set_status(s),f'Measurement {phase}: settling antenna, AZ err {az_err:+0.2f} EL err {el_err:+0.2f}.')
+        raise RuntimeError(f'Y Factor {phase} did not settle within tolerance; AZ err {last.get("az_error",0.0):+0.2f} EL err {last.get("el_error",0.0):+0.2f}.')
     def start_yfactor(self,dialog,antenna,label,cold_mode,cold_az,cold_el,cold_ra,cold_dec,count,dwell,alternate):
         if self.yfactor_thread and self.yfactor_thread.is_alive(): dialog.set_status('Y Factor already running.'); return
         if antenna not in self.sessions: dialog.set_status('Connect and select an antenna before Y Factor measurement.'); return
@@ -932,12 +952,12 @@ class WT7App(QWidget):
                 phases=('hot','cold') if (not alternate or i%2==1) else ('cold','hot'); results={}
                 for phase in phases:
                     if self.yfactor_stop.is_set(): break
-                    hot=self.yfactor_hot_target(label); target=hot if phase=='hot' else self.yfactor_cold_target(cold_mode,hot,cold_az,cold_el,cold_ra,cold_dec)
+                    hot=self.yfactor_hot_target(label); target=self.yfactor_phase_target(phase,label,cold_mode,cold_az,cold_el,cold_ra,cold_dec)
                     self.emit(lambda s:dialog.set_status(s),f'Measurement {i}/{count}: {phase}.'); self.emit(lambda t:self.apply_target(t),hot); self.emit(lambda data:self.cards[data[0]].set_state(data[1]),(antenna,'YFACTOR'))
-                    session.guarded_slew_to(target.azimuth,target.elevation,session.config.az_track_speed,session.config.el_track_speed,self.yfactor_stop,self.az_tol(),self.el_tol(),self.site.az_stop_tolerance_degrees,self.site.el_stop_tolerance_degrees,self.site.az_slow_speed,self.site.el_slow_speed,self.site.az_slow_threshold_degrees,self.site.el_slow_threshold_degrees,lambda p:self.emit(lambda data:self.update_position(*data),(antenna,p)),target_callback=(lambda _p, phase=phase: (self.yfactor_hot_target(label).azimuth,self.yfactor_hot_target(label).elevation) if phase=='hot' else (self.yfactor_cold_target(cold_mode,self.yfactor_hot_target(label),cold_az,cold_el,cold_ra,cold_dec).azimuth,self.yfactor_cold_target(cold_mode,self.yfactor_hot_target(label),cold_az,cold_el,cold_ra,cold_dec).elevation)))
-                    results[phase]=self.collect_yfactor_power(antenna,dwell)
+                    start_meta=self.yfactor_slew_and_settle(session,antenna,phase,label,cold_mode,cold_az,cold_el,cold_ra,cold_dec,dialog)
+                    results[phase]=self.collect_yfactor_power(antenna,dwell,session,lambda phase=phase:self.yfactor_phase_target(phase,label,cold_mode,cold_az,cold_el,cold_ra,cold_dec),start_meta)
                 if self.yfactor_stop.is_set(): break
-                ydb=results['hot']['power_value']-results['cold']['power_value']; rows.append({'local_time':datetime.now().astimezone().isoformat(timespec='seconds'),'antenna':antenna,'measurement':i,'hot_power':results['hot']['power_value'],'cold_power':results['cold']['power_value'],'power_unit':results['hot']['power_unit'],'y_factor_db':ydb})
+                ydb=results['hot']['power_value']-results['cold']['power_value']; rows.append({'local_time':datetime.now().astimezone().isoformat(timespec='seconds'),'antenna':antenna,'measurement':i,'hot_power':results['hot']['power_value'],'cold_power':results['cold']['power_value'],'power_unit':results['hot']['power_unit'],'y_factor_db':ydb,'hot_start_az_error':results['hot'].get('start_az_error'),'hot_start_el_error':results['hot'].get('start_el_error'),'hot_end_az_error':results['hot'].get('end_az_error'),'hot_end_el_error':results['hot'].get('end_el_error'),'cold_start_az_error':results['cold'].get('start_az_error'),'cold_start_el_error':results['cold'].get('start_el_error'),'cold_end_az_error':results['cold'].get('end_az_error'),'cold_end_el_error':results['cold'].get('end_el_error'),'hot_settle_attempts':results['hot'].get('settle_attempts'),'cold_settle_attempts':results['cold'].get('settle_attempts')})
             if rows:
                 with path.open('w',newline='',encoding='utf-8') as h: w=csv.DictWriter(h,fieldnames=list(rows[0])); w.writeheader(); w.writerows(rows)
                 avg=sum(r['y_factor_db'] for r in rows)/len(rows); msg=f'Y Factor {avg:0.1f} dB, n={len(rows)}'
@@ -948,14 +968,19 @@ class WT7App(QWidget):
         finally:
             self.yfactor_stop.clear()
             self.emit(lambda name:self.cards[name].set_state('STOPPED'),antenna)
-    def collect_yfactor_power(self,antenna,dwell):
+    def collect_yfactor_power(self,antenna,dwell,session=None,target_func=None,start_meta=None):
         vals=[]; end=time.monotonic()+dwell
         while time.monotonic()<end and not self.yfactor_stop.is_set():
             m=self.power.current_power_measurement(antenna)
             if m: vals.append(m)
             time.sleep(0.1)
         if not vals: raise RuntimeError('No B210 power measurements were available.')
-        return {'power_value':sum(float(v['power_value']) for v in vals)/len(vals),'power_dbfs':sum(float(v['power_dbfs']) for v in vals)/len(vals),'power_unit':vals[-1]['power_unit'],'sample_count':len(vals)}
+        result={'power_value':sum(float(v['power_value']) for v in vals)/len(vals),'power_dbfs':sum(float(v['power_dbfs']) for v in vals)/len(vals),'power_unit':vals[-1]['power_unit'],'sample_count':len(vals)}
+        if start_meta: result.update({'start_target_az':start_meta.get('target_az'),'start_target_el':start_meta.get('target_el'),'start_antenna_az':start_meta.get('antenna_az'),'start_antenna_el':start_meta.get('antenna_el'),'start_az_error':start_meta.get('az_error'),'start_el_error':start_meta.get('el_error'),'settle_attempts':start_meta.get('settle_attempts')})
+        if session and target_func:
+            pos=session.read_position(); self.emit(lambda data:self.update_position(*data),(antenna,pos)); target=target_func(); az_err,el_err=self.yfactor_position_error(session,pos,target)
+            result.update({'end_target_az':target.azimuth,'end_target_el':target.elevation,'end_antenna_az':pos.azimuth,'end_antenna_el':pos.elevation,'end_az_error':az_err,'end_el_error':el_err})
+        return result
     def start_peak_axis_tracking(self,dialog,axis,label,antenna):
         if self.peak_thread and self.peak_thread.is_alive(): dialog.set_status('Peak tracking already running.'); return
         if antenna not in self.sessions: dialog.set_status('Connect and select an antenna.'); return
