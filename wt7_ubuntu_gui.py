@@ -16,7 +16,7 @@ from wt7_config import B210Calibration, B210_CAL_LEVELS_DBM, PowerConfig, ScanCo
 from wt7_logging import EventLogger
 from wt7_solar import sun_equatorial, sun_position
 from wt7_state import AppStateStore, SystemRunState
-APP_VERSION = "v0.6"
+APP_VERSION = "v0.7"
 
 def hms(seconds: float) -> str:
     seconds %= 86400.0; h=int(seconds//3600); m=int((seconds%3600)//60); s=int(seconds%60); return f"{h:02d}:{m:02d}:{s:02d}"
@@ -840,11 +840,19 @@ class WT7App(QWidget):
         now=datetime.now().astimezone(); utc=now.astimezone(timezone.utc); self.local.setText(f'Local {now:%Y-%m-%d %H:%M:%S %Z}'); self.utc.setText(f'UTC {utc:%Y-%m-%d %H:%M:%S}'); self.lmst.setText(f'LMST {hms(local_sidereal_time(self.site.longitude,utc)/15.0*3600)}')
         sun=self.target_for_kind('sun'); moon=self.target_for_kind('moon'); self.sun.setText(f'SUN AZ {sun.azimuth:06.2f} EL {sun.elevation:06.2f}'); self.moon.setText(f'MOON AZ {moon.azimuth:06.2f} EL {moon.elevation:06.2f}')
         if self.tracking_kind:
-            try: self.apply_target(self.current_tracking_target(self.tracking_kind))
+            try: self.apply_target(self.reference_target_for_label(self.tracking_kind,sun,moon))
             except Exception as e: self.set_status(f'Target update fault: {e}')
         elif self.yfactor_hot_label:
-            try: self.apply_target(self.yfactor_hot_target(self.yfactor_hot_label))
+            try: self.apply_target(self.reference_target_for_label(self.yfactor_hot_label,sun,moon))
             except Exception as e: self.set_status(f'Y Factor target update fault: {e}')
+    def reference_target_for_label(self,label,sun,moon):
+        key=(label or '').strip().lower()
+        if key == 'sun': return sun
+        if key == 'moon': return moon
+        if key == 'source': return self.current_tracking_target('source')
+        if label in self.sources:
+            src=self.sources[label]; return source_position(src.name,src.ra_hours,src.dec_degrees,self.site.latitude,self.site.longitude)
+        return self.yfactor_hot_target(label)
     def poll_positions(self):
         if not self.sessions: return
         def worker():

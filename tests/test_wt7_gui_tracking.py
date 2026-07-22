@@ -189,6 +189,18 @@ dec_degrees = -80.0
 
         self.assertNotIn("East", app.card_targets)
 
+    def test_reference_update_uses_same_sun_target_for_source_pane(self):
+        app = self.make_app()
+        app.tracking_kind = "sun"
+        app.target_for_kind = lambda kind: TargetPosition("Sun", 12.34, 56.78) if kind == "sun" else TargetPosition("Moon", 98.76, 12.34)
+
+        app.update_reference()
+
+        self.assertEqual(app.sun.text(), "SUN AZ 012.34 EL 056.78")
+        self.assertEqual(app.source_name.text(), "Sun")
+        self.assertEqual(app.source_az.text(), "012.34")
+        self.assertEqual(app.source_el.text(), "056.78")
+
 
 
 if __name__ == "__main__":
