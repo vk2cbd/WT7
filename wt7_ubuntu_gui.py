@@ -456,18 +456,6 @@ class CalibrationDialog(SimpleDialog):
             for name,(az,el) in self.fields.items(): self.app.configs[name].calibration.az_offset=self.to_float(az,'AZ offset'); self.app.configs[name].calibration.el_offset=self.to_float(el,'EL offset')
             save_configs(self.app.config_path,self.app.configs); self.app.set_status('Calibration offsets saved.'); self.set_status('Calibration offsets saved.')
         except Exception as exc: self.fail(exc)
-class PowerSettingsDialog(SimpleDialog):
-    def __init__(self,app):
-        super().__init__(app,'Power'); g=QGridLayout(); self.main.addLayout(g); p=app.power_config; self.fields={}
-        specs=[('center_frequency_hz','Freq MHz',p.center_frequency_hz/1_000_000),('sample_rate_hz','Rate ksps',p.sample_rate_hz/1000),('measurement_bandwidth_hz','BW kHz',p.measurement_bandwidth_hz/1000),('gain_db','Gain A',p.gain_db),('gain_b_db','Gain B',p.gain_b_db),('update_rate_hz','GUI Hz',p.update_rate_hz),('smoothing_samples','Avg',p.smoothing_samples),('clock_source','Clock',p.clock_source)]
-        for r,(key,label,value) in enumerate(specs): self.fields[key]=self.edit(value); g.addWidget(lbl(label),r,0); g.addWidget(self.fields[key],r,1)
-        self.buttons()
-    def accept(self):
-        try:
-            p=self.app.power_config; p.center_frequency_hz=int(self.to_float(self.fields['center_frequency_hz'],'Freq MHz')*1_000_000); p.sample_rate_hz=int(self.to_float(self.fields['sample_rate_hz'],'Rate ksps')*1000); p.measurement_bandwidth_hz=int(self.to_float(self.fields['measurement_bandwidth_hz'],'BW kHz')*1000); p.gain_db=self.fields['gain_db'].text(); p.gain_b_db=self.fields['gain_b_db'].text(); p.update_rate_hz=self.to_float(self.fields['update_rate_hz'],'GUI Hz'); p.smoothing_samples=self.to_int(self.fields['smoothing_samples'],'Avg'); p.clock_source=self.fields['clock_source'].text().strip() or 'internal'
-            save_power_config(self.app.config_path,p); self.app.power_config=p; self.app.power.freq.setText(f'{p.center_frequency_hz/1_000_000:0.1f}'); self.app.power.rate.setText(f'{p.sample_rate_hz/1000:0.0f}'); self.app.power.bw.setText(f'{p.measurement_bandwidth_hz/1000:0.0f}'); self.app.power.gain_a.setText(str(p.gain_db)); self.app.power.gain_b.setText(str(p.gain_b_db)); self.app.power.avg.setText(str(p.smoothing_samples)); self.app.power.gui_hz.setText(f'{p.update_rate_hz:0.0f}'); self.app.power.clock.setText(p.clock_source); self.app.set_status('Power settings saved; restart SDR power to apply.'); super().accept()
-        except Exception as exc: self.fail(exc)
-
 class ScanSettingsDialog(SimpleDialog):
     def __init__(self,app):
         super().__init__(app,'Scan Cal'); g=QGridLayout(); self.main.addLayout(g); s=load_scan_config(app.config_path); self.fields={}; self.antenna=QComboBox(); self.antenna.addItems(list(app.configs.keys())); self.antenna.setCurrentText(s.antenna_name); self.high_to_low=QCheckBox('AZ scan high to low'); self.high_to_low.setChecked(s.az_scan_high_to_low)
@@ -647,7 +635,6 @@ class WT7App(QWidget):
         d=ScanSettingsDialog(self); d.setWindowModality(Qt.NonModal); d.setAttribute(Qt.WA_DeleteOnClose,True); self.modeless_dialogs.append(d); d.destroyed.connect(lambda _obj,d=d: self.modeless_dialogs.remove(d) if d in self.modeless_dialogs else None); d.show()
     def open_yfactor_dialog(self): YFactorSettingsDialog(self).exec_()
     def open_encoders_dialog(self): EncodersDialog(self).exec_()
-    def open_power_dialog(self): PowerSettingsDialog(self).exec_()
     def open_peak_calibration(self): PeakCalibrationDialog(self).exec_()
     def open_b210_calibration(self): B210CalibrationDialog(self).exec_()
     def run_thread(self,fn,name='WT7Worker'): threading.Thread(target=fn,name=name,daemon=True).start()

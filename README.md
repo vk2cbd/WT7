@@ -27,14 +27,14 @@ python3 wt7_ubuntu_gui.py --config wt7_ubuntu.ini
 
 ## Notes
 
-The PyQt5 main control surface currently includes connect/disconnect, guarded manual jogs, Sun/Moon/source tracking, park, live Sun/Moon/time reference, live antenna positions, and B210 dual-channel power display/logging.
+The PyQt5 control surface includes connect/disconnect, guarded manual jogs, Sun/Moon/source tracking, park, live Sun/Moon/time reference, live antenna positions, B210 dual-channel power display/logging, B210 calibration, scan calibration, Y factor, source management, limits, observer settings, tracking settings, encoder scan, peak calibration, and manual calibration.
 
-The full renamed Tkinter implementation is retained as `wt7_tk_legacy_gui.py` during the transition for secondary dialogs that still need detailed PyQt5 porting.
+The renamed Tkinter implementation remains as `wt7_tk_legacy_gui.py` only as a historical fallback/reference while WT7 stabilises.
 
 ## Key Files
 
 - `wt7_ubuntu_gui.py` - PyQt5 main operator interface
-- `wt7_tk_legacy_gui.py` - renamed legacy Tkinter GUI fallback
+- `wt7_tk_legacy_gui.py` - historical Tkinter GUI fallback/reference
 - `wt7_antenna.py` - Arduino protocol, controller session, and guarded motion
 - `wt7_config.py` - `.ini` loading/saving
 - `wt7_b210_power.py` - B210 dual-channel power meter primitives

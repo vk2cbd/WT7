@@ -612,7 +612,7 @@ This section consolidates the requirements discussed during development.
 ### Development And Maintenance Requirements
 
 - WT7 shall keep the code modular enough for future GUI changes.
-- WT7 shall retain the Tkinter legacy GUI only as a transition reference until PyQt5 dialogs are complete.
+- WT7 shall retain the Tkinter legacy GUI only as a historical fallback/reference while WT7 stabilises.
 - Tests shall cover safety, configuration, tracking state, B210 power primitives, and GUI state behaviour.
 - The application should eventually support a cleaner architecture separating GUI presentation from station-control services.
 - GitHub repositories and local directories should be kept tidy as versions are superseded.
@@ -622,7 +622,7 @@ This section consolidates the requirements discussed during development.
 WT7 currently contains:
 
 - PyQt5 main GUI in `wt7_ubuntu_gui.py`.
-- Legacy Tkinter implementation retained in `wt7_tk_legacy_gui.py`.
+- Historical Tkinter fallback/reference retained in `wt7_tk_legacy_gui.py`.
 - Serial/controller/safety logic in `wt7_antenna.py`.
 - Configuration logic in `wt7_config.py`.
 - B210 power logic in `wt7_b210_power.py`.
@@ -630,4 +630,4 @@ WT7 currently contains:
 - Event logging in `wt7_logging.py`.
 - Regression tests under `tests/`.
 
-Some workflows are still evolving, especially the PyQt5 versions of secondary dialogs and the B210-powered calibration/Y factor paths. The current document is therefore both a description of the app and a requirements baseline for the next round of development.
+Some workflows are still evolving, especially B210-powered calibration, scan calibration, and Y factor field behaviour. The current document is therefore both a description of the app and a requirements baseline for the next round of development.
