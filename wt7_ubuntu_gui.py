@@ -16,7 +16,7 @@ from wt7_config import B210Calibration, B210_CAL_LEVELS_DBM, PowerConfig, ScanCo
 from wt7_logging import EventLogger
 from wt7_solar import sun_equatorial, sun_position
 from wt7_state import AppStateStore, SystemRunState
-APP_VERSION = "v0.7"
+APP_VERSION = "v0.8"
 
 def hms(seconds: float) -> str:
     seconds %= 86400.0; h=int(seconds//3600); m=int((seconds%3600)//60); s=int(seconds%60); return f"{h:02d}:{m:02d}:{s:02d}"
@@ -735,6 +735,8 @@ class WT7App(QWidget):
         finally:
             for thread in list(active_threads.values()):
                 if thread.is_alive(): thread.join(timeout=1.0)
+            if stop is self.tracking_stop and stop.is_set() and not self.tracking_kind:
+                self.emit(lambda _x:self.finish_tracking_fault_states(),None)
     def tracking_worker(self,name,session,kind,stop):
         try:
             target=self.current_tracking_target(kind)
@@ -759,7 +761,13 @@ class WT7App(QWidget):
         except Exception as e:
             if stop is self.tracking_stop:
                 self.tracking_kind=''; stop.set()
+                for _name,_session in list(self.sessions.items()):
+                    self.run_thread(lambda s=_session:s.stop_all(),f'TrackFaultStop{_name}')
             self.emit(lambda data:self.mark_fault(*data),(name,str(e)))
+    def finish_tracking_fault_states(self):
+        for name in self.sessions:
+            if name in self.cards and self.cards[name].state.text() != 'FAULT':
+                self.cards[name].set_state('STOPPED')
     def park_all(self):
         if not self.sessions: self.set_status('Connect antennas before parking.'); return
         self.tracking_stop.set(); self.tracking_kind=''; self.tracking_nominal_az.clear(); stop=threading.Event(); sessions=list(self.sessions.items()); self.set_status('Parking antennas.')

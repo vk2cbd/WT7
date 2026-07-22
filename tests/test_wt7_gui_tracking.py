@@ -201,6 +201,15 @@ dec_degrees = -80.0
         self.assertEqual(app.source_az.text(), "012.34")
         self.assertEqual(app.source_el.text(), "056.78")
 
+    def test_tracking_fault_cleanup_marks_non_faulted_antennas_stopped(self):
+        app = self.make_app()
+        app.sessions = {"East": _FakeSession()}
+        app.cards["East"].set_state("SLEWING")
+
+        app.finish_tracking_fault_states()
+
+        self.assertEqual(app.cards["East"].state.text(), "STOPPED")
+
 
 
 if __name__ == "__main__":
