@@ -160,6 +160,32 @@ dec_degrees = -80.0
         self.assertEqual(app.scan_offset_degrees, 0.0)
         self.assertEqual(app.cards["East"].state.text(), "STOPPED")
 
+    def test_scan_dwell_refreshes_tracking_target_during_measurement(self):
+        app = self.make_app()
+        app.site.track_interval_seconds = 0.1
+        calls = []
+        nominal = TargetPosition("Sun", 10.0, 20.0)
+        target = TargetPosition("Sun", 11.0, 20.0)
+        app.power.current_raw_power_measurement = lambda antenna, last_sequence: {
+            "power_value": -30.0,
+            "power_dbfs": -30.0,
+            "power_unit": "dBFS",
+            "power_channel": "A",
+        }
+
+        def refresh(axis, offset, antenna):
+            calls.append((axis, offset, antenna))
+            return nominal, target
+
+        app.refresh_scan_dwell_tracking = refresh
+
+        row = app.collect_power_point(Axis.AZIMUTH, 1.0, 0.25, nominal, target, "East", 1)
+
+        self.assertGreaterEqual(len(calls), 1)
+        self.assertEqual(calls[0], (Axis.AZIMUTH, 1.0, "East"))
+        self.assertEqual(row["nominal_az"], 10.0)
+        self.assertEqual(row["target_az"], 11.0)
+
     def test_yfactor_phase_target_and_error_helpers(self):
         app = self.make_app()
         session = _FakeSession()

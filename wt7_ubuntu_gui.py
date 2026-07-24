@@ -16,7 +16,7 @@ from wt7_config import B210Calibration, B210_CAL_LEVELS_DBM, PowerConfig, ScanCo
 from wt7_logging import EventLogger
 from wt7_solar import sun_equatorial, sun_position
 from wt7_state import AppStateStore, SystemRunState
-APP_VERSION = "v0.9"
+APP_VERSION = "v0.10"
 
 def hms(seconds: float) -> str:
     seconds %= 86400.0; h=int(seconds//3600); m=int((seconds%3600)//60); s=int(seconds%60); return f"{h:02d}:{m:02d}:{s:02d}"
@@ -932,6 +932,15 @@ class WT7App(QWidget):
         if status_text and dialog: self.emit(lambda s:dialog.set_status(s),status_text)
         self.slew_all_to_target(nominal,'SCAN',self.scan_stop,scan_antenna=cfg.antenna_name)
         return nominal
+    def refresh_scan_dwell_tracking(self,axis,offset,antenna):
+        nominal=self.current_tracking_target(self.tracking_kind)
+        self.set_scan_offset(antenna,axis,offset)
+        self.emit(lambda t:self.apply_target(t),nominal)
+        self.slew_all_to_target(nominal,'SCAN',self.scan_stop,scan_antenna=antenna)
+        return nominal,self.offset_target(nominal,axis,offset)
+    def scan_dwell_correction_interval(self,dwell):
+        interval=getattr(self.site,'track_interval_seconds',1.0) or 1.0
+        return max(0.1,min(float(interval),1.0,float(dwell)))
 
     def resume_tracking_after_scan(self,kind):
         if not kind or not self.sessions: return
@@ -979,15 +988,19 @@ class WT7App(QWidget):
                 self.emit(lambda k:self.resume_tracking_after_scan(k),resume_kind)
             self.scan_stop.clear()
     def collect_power_point(self,axis,offset,dwell,nominal,target,antenna,scan_no):
-        vals=[]; last_sequence=getattr(self.power,'power_sequence',0); end=time.monotonic()+dwell
+        vals=[]; last_sequence=getattr(self.power,'power_sequence',0); end=time.monotonic()+dwell; next_correction=time.monotonic()+self.scan_dwell_correction_interval(dwell); live_nominal=nominal; live_target=target
         while time.monotonic()<end and not self.scan_stop.is_set():
+            if time.monotonic()>=next_correction:
+                live_nominal,live_target=self.refresh_scan_dwell_tracking(axis,offset,antenna)
+                next_correction=time.monotonic()+self.scan_dwell_correction_interval(dwell)
+                if self.scan_stop.is_set(): break
             m=self.power.current_raw_power_measurement(antenna,last_sequence)
             if m:
                 vals.append(m); last_sequence=getattr(self.power,'power_sequence',last_sequence)
             time.sleep(0.02)
         if not vals: raise RuntimeError('No B210 power measurements were available.')
         pos=self.positions.get(antenna); avg_val=sum(float(v['power_value']) for v in vals)/len(vals); avg_dbfs=sum(float(v['power_dbfs']) for v in vals)/len(vals)
-        return {'local_time':datetime.now().astimezone().isoformat(timespec='seconds'),'antenna':antenna,'axis':axis.value,'scan_number':scan_no,'offset_degrees':offset,'nominal_az':nominal.azimuth,'nominal_el':nominal.elevation,'target_az':target.azimuth,'target_el':target.elevation,'power_value':avg_val,'power_dbfs':avg_dbfs,'power_unit':vals[-1]['power_unit'],'power_channel':vals[-1]['power_channel'],'sample_count':len(vals),'antenna_az':None if not pos else pos.azimuth,'antenna_el':None if not pos else pos.elevation,'raw_az':None if not pos else pos.raw_azimuth,'raw_el':None if not pos else pos.raw_elevation}
+        return {'local_time':datetime.now().astimezone().isoformat(timespec='seconds'),'antenna':antenna,'axis':axis.value,'scan_number':scan_no,'offset_degrees':offset,'nominal_az':live_nominal.azimuth,'nominal_el':live_nominal.elevation,'target_az':live_target.azimuth,'target_el':live_target.elevation,'power_value':avg_val,'power_dbfs':avg_dbfs,'power_unit':vals[-1]['power_unit'],'power_channel':vals[-1]['power_channel'],'sample_count':len(vals),'antenna_az':None if not pos else pos.azimuth,'antenna_el':None if not pos else pos.elevation,'raw_az':None if not pos else pos.raw_azimuth,'raw_el':None if not pos else pos.raw_elevation}
     def write_scan_csv(self,path,rows,averaged=None):
         with path.open('w',newline='',encoding='utf-8') as h:
             fieldnames=list(rows[0]); w=csv.DictWriter(h,fieldnames=fieldnames); w.writeheader(); w.writerows(rows)
