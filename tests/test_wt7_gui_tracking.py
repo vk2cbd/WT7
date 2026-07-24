@@ -146,6 +146,7 @@ dec_degrees = -80.0
         session = _FakeSession()
         app.sessions = {"East": session}
         app.active_scan_antenna = "East"
+        app.cards["East"].set_state("SCAN")
         app.scan_stop.clear()
         app.set_scan_offset("East", Axis.AZIMUTH, 2.0)
         app.run_thread = lambda fn, name="": fn()
@@ -157,6 +158,7 @@ dec_degrees = -80.0
         self.assertEqual(app.scan_antenna_name, "")
         self.assertIsNone(app.scan_axis)
         self.assertEqual(app.scan_offset_degrees, 0.0)
+        self.assertEqual(app.cards["East"].state.text(), "STOPPED")
 
     def test_yfactor_phase_target_and_error_helpers(self):
         app = self.make_app()

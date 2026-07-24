@@ -16,7 +16,7 @@ from wt7_config import B210Calibration, B210_CAL_LEVELS_DBM, PowerConfig, ScanCo
 from wt7_logging import EventLogger
 from wt7_solar import sun_equatorial, sun_position
 from wt7_state import AppStateStore, SystemRunState
-APP_VERSION = "v0.8"
+APP_VERSION = "v0.9"
 
 def hms(seconds: float) -> str:
     seconds %= 86400.0; h=int(seconds//3600); m=int((seconds%3600)//60); s=int(seconds%60); return f"{h:02d}:{m:02d}:{s:02d}"
@@ -464,7 +464,7 @@ class ScanSettingsDialog(SimpleDialog):
         for r,(key,label,value) in enumerate(specs,1): self.fields[key]=self.edit(value); g.addWidget(lbl(label),r,0); g.addWidget(self.fields[key],r,1)
         g.addWidget(self.high_to_low,5,0,1,2); self.status=lbl('Track a source and start B210 power before scanning.','faultTag'); self.main.addWidget(self.status)
         row=QHBoxLayout(); az=btn('AZ Scan'); el=btn('EL Scan'); stop=btn('Stop Scan'); close=btn('Close')
-        az.clicked.connect(lambda:self.start_scan(Axis.AZIMUTH)); el.clicked.connect(lambda:self.start_scan(Axis.ELEVATION)); stop.clicked.connect(self.stop_scan); close.clicked.connect(self.reject)
+        az.clicked.connect(lambda:self.start_scan(Axis.AZIMUTH)); el.clicked.connect(lambda:self.start_scan(Axis.ELEVATION)); stop.clicked.connect(self.stop_scan); close.clicked.connect(self.request_close)
         for b in [az,el,stop]: row.addWidget(b)
         row.addStretch(1); row.addWidget(close); self.main.addLayout(row)
     def scan_config(self):
@@ -481,6 +481,14 @@ class ScanSettingsDialog(SimpleDialog):
         if callable(stopper): stopper()
         else: self.set_status('No PyQt scan worker is running.')
     def set_status(self,text): self.status.setText(text)
+    def request_close(self):
+        if getattr(self.app,'is_scan_running',lambda:False)():
+            self.stop_scan(); self.set_status('Scan stop requested; close after scan cleanup finishes.'); return
+        self.reject()
+    def closeEvent(self,event):
+        if getattr(self.app,'is_scan_running',lambda:False)():
+            self.stop_scan(); self.set_status('Scan stop requested; close after scan cleanup finishes.'); event.ignore(); return
+        event.accept()
 class YFactorSettingsDialog(SimpleDialog):
     def __init__(self,app):
         super().__init__(app,'Y Factor'); g=QGridLayout(); self.main.addLayout(g); y=load_yfactor_config(app.config_path)
@@ -901,12 +909,17 @@ class WT7App(QWidget):
             save_scan_config(self.config_path,cfg); self.scan_stop.clear(); self.scan_resume_kind=self.tracking_kind; self.tracking_stop.set(); self.active_scan_antenna=cfg.antenna_name; self.active_scan_dialog=dialog; dialog.set_status(f'{axis.value} scan starting on {cfg.antenna_name}.'); self.set_status(f'{axis.value} scan starting on {cfg.antenna_name}.')
             self.scan_thread=threading.Thread(target=lambda:self.scan_worker(axis,cfg,dialog),daemon=True); self.scan_thread.start()
         except Exception as exc: dialog.set_status(str(exc))
+    def is_scan_running(self):
+        return bool(self.scan_thread and self.scan_thread.is_alive())
     def stop_scan(self):
         self.scan_stop.set(); self.set_scan_offset(None); self.set_status('Scan stop requested.')
         dialog=self.active_scan_dialog
         if dialog: self.emit(lambda d:d.set_status('Scan stop requested.'),dialog)
         session=self.sessions.get(self.active_scan_antenna)
         if session: self.run_thread(lambda s=session:s.stop_all(),'StopScanAntenna')
+        for name,card in self.cards.items():
+            if name == self.active_scan_antenna or card.state.text().upper() == 'SCAN':
+                card.set_state('STOPPED')
     def scan_preload_offset(self,axis,cfg,first_offset):
         if axis != Axis.AZIMUTH: return None
         comp=max(0.0,float(self.configs[cfg.antenna_name].az_low_to_high_compensation or 0.0))
