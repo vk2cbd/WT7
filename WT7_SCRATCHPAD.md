@@ -81,3 +81,20 @@ Observation:
 Safety Requirement:
 
 - Both momentary and latched manual drive modes must remain subject to all existing safety mechanisms, including azimuth and elevation limits, margins, no-go zones, no-progress detection, stop commands, watchdogs, and maximum jog/slew timers.
+
+## GUI Limits Bar Concept
+
+Status: parked
+
+Observation:
+
+- A graphical AZ/EL limits display may be useful in the spare space to the right of each antenna manual control pad.
+- The AZ display should represent the full 0-360 degree range, with allowed travel shown in green and forbidden/dead-zone regions shown in red.
+- For wrapped azimuth limits such as AZ min 270 and AZ max 265, the display should make it clear that 270 -> 360 -> 0 -> 265 is allowed and 265 -> 270 is the no-go zone.
+- The EL display should show the 0-90 degree range, with configured elevation limits and margins indicated.
+
+Design Notes:
+
+- The bars must sit on the RHS of the manual controls in the existing antenna pane, not below the existing antenna information.
+- The bars must not increase the antenna pane height or cause RHS clipping.
+- The design is improving, but it needs more thought before implementation.
