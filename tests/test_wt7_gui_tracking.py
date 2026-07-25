@@ -163,8 +163,8 @@ dec_degrees = -80.0
     def test_rate_fields_start_visible_with_muted_style(self):
         app = self.make_app()
 
-        self.assertEqual(app.cards["East"].az_rate.text(), "AZ rate --.-- deg/s")
-        self.assertEqual(app.cards["East"].el_rate.text(), "EL rate --.-- deg/s")
+        self.assertEqual(app.cards["East"].az_rate.text(), "AZ rate  --.-- deg/s")
+        self.assertEqual(app.cards["East"].el_rate.text(), "EL rate  --.-- deg/s")
         self.assertEqual(app.cards["East"].az_rate.objectName(), "muted")
         self.assertEqual(app.cards["East"].el_rate.objectName(), "muted")
 
@@ -177,8 +177,22 @@ dec_degrees = -80.0
 
         app.update_position("East", Position(0.0, 0.0, 20.0, 24.0))
 
-        self.assertIn("AZ rate 5.", app.cards["East"].az_rate.text())
-        self.assertIn("EL rate 2.", app.cards["East"].el_rate.text())
+        self.assertIn("AZ rate  5.", app.cards["East"].az_rate.text())
+        self.assertIn("EL rate  2.", app.cards["East"].el_rate.text())
+
+    def test_position_rate_ignores_too_close_samples(self):
+        app = self.make_app()
+        app.sessions = {"East": _FakeSession()}
+        app.cards["East"].set_state("SLEWING")
+        app.cards["East"].set_rates(0.4, 0.2)
+        previous = Position(0.0, 0.0, 10.0, 20.0)
+        app.position_rate_state["East"] = (previous, time.monotonic() - 0.001)
+
+        app.update_position("East", Position(0.0, 0.0, 10.5, 20.5))
+
+        self.assertEqual(app.position_rate_state["East"][0], previous)
+        self.assertEqual(app.cards["East"].az_rate.text(), "AZ rate  0.40 deg/s")
+        self.assertEqual(app.cards["East"].el_rate.text(), "EL rate  0.20 deg/s")
 
     def test_position_update_clears_rates_when_drive_inactive(self):
         app = self.make_app()
@@ -187,8 +201,8 @@ dec_degrees = -80.0
 
         app.update_position("East", Position(0.0, 0.0, 20.0, 24.0))
 
-        self.assertEqual(app.cards["East"].az_rate.text(), "AZ rate --.-- deg/s")
-        self.assertEqual(app.cards["East"].el_rate.text(), "EL rate --.-- deg/s")
+        self.assertEqual(app.cards["East"].az_rate.text(), "AZ rate  --.-- deg/s")
+        self.assertEqual(app.cards["East"].el_rate.text(), "EL rate  --.-- deg/s")
 
     def test_tracking_state_uses_compensated_drive_target(self):
         app = self.make_app()

@@ -16,7 +16,7 @@ from wt7_config import B210Calibration, B210_CAL_LEVELS_DBM, PowerConfig, ScanCo
 from wt7_logging import EventLogger
 from wt7_solar import sun_equatorial, sun_position
 from wt7_state import AppStateStore, SystemRunState
-APP_VERSION = "v0.18"
+APP_VERSION = "v0.19"
 
 def hms(seconds: float) -> str:
     seconds %= 86400.0; h=int(seconds//3600); m=int((seconds%3600)//60); s=int(seconds%60); return f"{h:02d}:{m:02d}:{s:02d}"
@@ -36,6 +36,7 @@ def lock_width(widget, sample: str, pad: int = 10):
     width = widget.fontMetrics().horizontalAdvance(sample) + pad
     widget.setMinimumWidth(width); widget.setMaximumWidth(width)
     return widget
+RATE_MIN_INTERVAL_SECONDS = 0.15
 class Panel(QFrame):
     def __init__(self): super().__init__(); self.setObjectName('panel'); self.setFrameShape(QFrame.StyledPanel)
 class AntennaCard(Panel):
@@ -47,7 +48,7 @@ class AntennaCard(Panel):
         self.az=bold('--.--',18); self.el=bold('--.--',18); lock_width(self.az,'359.99',12); lock_width(self.el,'090.00',12)
         self.az_err=lbl('--.--'); self.el_err=lbl('--.--'); lock_width(self.az_err,'+999.99',10); lock_width(self.el_err,'+999.99',10)
         self.limits=lbl('SAFE','safe'); lock_width(self.limits,'FAULT',18); self.mode=lbl('--'); lock_width(self.mode,'Disconnected',10); self.target=lbl('--.-- / --.--'); lock_width(self.target,'359.99 / 090.00',12); self.az_comp=lbl('AZ comp --','muted'); lock_width(self.az_comp,'AZ comp +9.99',10)
-        self.az_rate=lbl('AZ rate --.-- deg/s','muted'); self.el_rate=lbl('EL rate --.-- deg/s','muted'); lock_width(self.az_rate,'AZ rate 999.99 deg/s',10); lock_width(self.el_rate,'EL rate 999.99 deg/s',10)
+        self.az_rate=lbl('AZ rate  --.-- deg/s','muted'); self.el_rate=lbl('EL rate  --.-- deg/s','muted'); lock_width(self.az_rate,'AZ rate  999.99 deg/s',10); lock_width(self.el_rate,'EL rate  999.99 deg/s',10)
         g.addWidget(title,0,0,1,2); g.addWidget(self.state,0,8,1,2,Qt.AlignRight)
         g.addWidget(lbl('AZ','muted'),1,0); g.addWidget(self.az,1,1); g.addWidget(lbl('AZ err','muted'),1,3); g.addWidget(self.az_err,1,4); g.addWidget(lbl('Limits','muted'),1,5); g.addWidget(self.limits,1,6)
         g.addWidget(lbl('EL','muted'),2,0); g.addWidget(self.el,2,1); g.addWidget(lbl('EL err','muted'),2,3); g.addWidget(self.el_err,2,4); g.addWidget(lbl('Mode','muted'),2,5); g.addWidget(self.mode,2,6)
@@ -63,8 +64,8 @@ class AntennaCard(Panel):
     def set_position(self,pos: Optional[Position]):
         self.az.setText('--.--' if pos is None else f'{pos.azimuth:06.2f}'); self.el.setText('--.--' if pos is None else f'{pos.elevation:05.2f}')
     def set_rates(self,az_rate: Optional[float], el_rate: Optional[float]):
-        self.az_rate.setText('AZ rate --.-- deg/s' if az_rate is None else f'AZ rate {az_rate:0.2f} deg/s')
-        self.el_rate.setText('EL rate --.-- deg/s' if el_rate is None else f'EL rate {el_rate:0.2f} deg/s')
+        self.az_rate.setText('AZ rate  --.-- deg/s' if az_rate is None else f'AZ rate  {az_rate:0.2f} deg/s')
+        self.el_rate.setText('EL rate  --.-- deg/s' if el_rate is None else f'EL rate  {el_rate:0.2f} deg/s')
     def set_target(self,target: Optional[TargetPosition], pos: Optional[Position], az_comp: Optional[float] = None):
         if not target:
             self.target.setText('--.-- / --.--'); self.az_err.setText('--.--'); self.el_err.setText('--.--'); self.az_comp.setText('AZ comp --'); return
@@ -947,14 +948,19 @@ class WT7App(QWidget):
         return card.state.text() in ('TRACKING','SLEWING','PARKING','SCAN','YFACTOR','MANUAL')
     def update_position_rates(self,name,pos):
         now=time.monotonic(); previous=self.position_rate_state.get(name)
-        self.position_rate_state[name]=(pos,now)
         card=self.cards.get(name)
-        if not card: return
+        if not card:
+            self.position_rate_state[name]=(pos,now); return
         if not self.antenna_rate_active(name):
+            self.position_rate_state[name]=(pos,now)
             card.set_rates(None,None); return
         if not previous:
+            self.position_rate_state[name]=(pos,now)
             card.set_rates(0.0,0.0); return
-        prev_pos,prev_time=previous; dt=max(0.001,now-prev_time)
+        prev_pos,prev_time=previous; dt=now-prev_time
+        if dt < RATE_MIN_INTERVAL_SECONDS:
+            return
+        self.position_rate_state[name]=(pos,now)
         az_rate=abs(shortest_angle_delta(prev_pos.azimuth,pos.azimuth))/dt
         el_rate=abs(pos.elevation-prev_pos.elevation)/dt
         card.set_rates(az_rate,el_rate)
