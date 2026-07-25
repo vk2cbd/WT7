@@ -67,3 +67,17 @@ Things To Revisit:
 - Ensure hot and cold target positions are refreshed continuously during Y Factor slews and dwell periods.
 - Confirm that the non-selected antenna remains stopped, as intended, during the measurement.
 - Decouple the Y Factor dialog from the main window so it can be moved independently while the main app remains visible and usable.
+
+## Manual Drive Controls
+
+Status: open
+
+Observation:
+
+- The manual drive controls should be split into two functional halves.
+- The left-hand side should remain momentary drive: press and hold to move, release to stop.
+- The right-hand side should provide latched manual drive: one click starts driving, a second click stops driving.
+
+Safety Requirement:
+
+- Both momentary and latched manual drive modes must remain subject to all existing safety mechanisms, including azimuth and elevation limits, margins, no-go zones, no-progress detection, stop commands, watchdogs, and maximum jog/slew timers.
