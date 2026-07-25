@@ -50,3 +50,20 @@ Things To Revisit:
 - Confirm that East and West OLED displays show only their own antenna state unless a shared target/source value is intentionally displayed.
 - Confirm that OLED source labels remain correct during scan and Y factor workflows.
 - Decide whether OLED layout needs a refreshed standard format for WT7.
+
+## Y Factor Workflow
+
+Status: open
+
+Observation:
+
+- During Y Factor dwell time, the app may not continue tracking the selected source closely enough.
+- This could bias hot/cold power measurements if the antenna drifts or the target position changes during a long dwell.
+- The Y Factor popup currently appears coupled to the main app window and cannot be moved independently.
+
+Things To Revisit:
+
+- Confirm whether the selected antenna continues source tracking corrections during every Y Factor dwell phase.
+- Ensure hot and cold target positions are refreshed continuously during Y Factor slews and dwell periods.
+- Confirm that the non-selected antenna remains stopped, as intended, during the measurement.
+- Decouple the Y Factor dialog from the main window so it can be moved independently while the main app remains visible and usable.
