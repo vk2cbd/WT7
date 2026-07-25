@@ -394,6 +394,48 @@ dec_degrees = -80.0
         self.assertEqual(slews[0][0:2], (30.0, 40.0))
         self.assertEqual(result["power_unit"], "dBFS")
 
+    def test_yfactor_small_dwell_correction_suppresses_az_compensation(self):
+        app = self.make_app()
+        target = TargetPosition("Moon", 30.20, 40.0)
+        kwargs_seen = []
+
+        class _YFactorSession(_FakeSession):
+            def __init__(self):
+                super().__init__()
+                self.config.az_track_speed = 100
+                self.config.el_track_speed = 100
+
+            def guarded_slew_to(self, *args, **kwargs):
+                kwargs_seen.append(kwargs)
+
+            def read_position(self):
+                return Position(0.0, 0.0, 30.0, 40.0)
+
+        app.refresh_yfactor_dwell_tracking("East", _YFactorSession(), target)
+
+        self.assertEqual(kwargs_seen[0].get("force_az_low_to_high_compensation"), False)
+
+    def test_yfactor_large_dwell_correction_allows_az_compensation(self):
+        app = self.make_app()
+        target = TargetPosition("Moon", 30.60, 40.0)
+        kwargs_seen = []
+
+        class _YFactorSession(_FakeSession):
+            def __init__(self):
+                super().__init__()
+                self.config.az_track_speed = 100
+                self.config.el_track_speed = 100
+
+            def guarded_slew_to(self, *args, **kwargs):
+                kwargs_seen.append(kwargs)
+
+            def read_position(self):
+                return Position(0.0, 0.0, 30.0, 40.0)
+
+        app.refresh_yfactor_dwell_tracking("East", _YFactorSession(), target)
+
+        self.assertIsNone(kwargs_seen[0].get("force_az_low_to_high_compensation"))
+
     def test_yfactor_dwell_refreshes_displayed_cold_target(self):
         app = self.make_app()
         app.site.track_interval_seconds = 0.1
