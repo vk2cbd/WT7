@@ -16,7 +16,7 @@ from wt7_config import B210Calibration, B210_CAL_LEVELS_DBM, PowerConfig, ScanCo
 from wt7_logging import EventLogger
 from wt7_solar import sun_equatorial, sun_position
 from wt7_state import AppStateStore, SystemRunState
-APP_VERSION = "v0.14"
+APP_VERSION = "v0.15"
 
 def hms(seconds: float) -> str:
     seconds %= 86400.0; h=int(seconds//3600); m=int((seconds%3600)//60); s=int(seconds%60); return f"{h:02d}:{m:02d}:{s:02d}"
@@ -60,11 +60,12 @@ class AntennaCard(Panel):
         g.setColumnMinimumWidth(7,6); g.setColumnStretch(10,1)
     def set_position(self,pos: Optional[Position]):
         self.az.setText('--.--' if pos is None else f'{pos.azimuth:06.2f}'); self.el.setText('--.--' if pos is None else f'{pos.elevation:05.2f}')
-    def set_target(self,target: Optional[TargetPosition], pos: Optional[Position], az_comp: float = 0.0):
+    def set_target(self,target: Optional[TargetPosition], pos: Optional[Position], az_comp: Optional[float] = None):
         if not target:
             self.target.setText('--.-- / --.--'); self.az_err.setText('--.--'); self.el_err.setText('--.--'); self.az_comp.setText(''); return
         self.target.setText(f'{target.azimuth:06.2f} / {target.elevation:05.2f}')
-        self.az_comp.setText(f'AZ comp {az_comp:+0.2f}' if abs(az_comp) >= 0.005 else '')
+        if az_comp is None: self.az_comp.setText('')
+        else: self.az_comp.setText(f'AZ comp {az_comp:+0.2f}' if abs(az_comp) >= 0.005 else 'AZ comp none')
         if pos: self.az_err.setText(f'{shortest_angle_delta(pos.azimuth,target.azimuth):+0.2f}'); self.el_err.setText(f'{target.elevation-pos.elevation:+0.2f}')
     def set_state(self,text):
         self.state.setText(text.upper()); low=text.lower(); name='stateFault' if any(x in low for x in ['fault','timeout']) else ('stateBusy' if any(x in low for x in ['slew','park','scan','yfactor','manual','connecting']) else ('stateGood' if 'tracking' in low else 'stateStopped'))
@@ -881,12 +882,12 @@ class WT7App(QWidget):
             self.cards[name].set_target(card_target,self.positions.get(name),az_comp)
     def antenna_display_target(self,name,source_target):
         override=self.card_targets.get(name)
-        if override is not None: return override,0.0
+        if override is not None: return override,None
         return self.drive_target_for_display(name,source_target)
     def drive_target_for_display(self,name,source_target):
-        if source_target is None: return None,0.0
+        if source_target is None: return None,None
         session=self.sessions.get(name); pos=self.positions.get(name); cfg=self.configs.get(name)
-        if not self.tracking_kind or not session or not pos or not cfg: return source_target,0.0
+        if not self.tracking_kind or not session or not pos or not cfg: return source_target,None
         comp=max(0.0,float(getattr(cfg,'az_low_to_high_compensation',0.0) or 0.0))
         if comp <= 0.0: return source_target,0.0
         force=self.tracking_az_comp_force.get(name)

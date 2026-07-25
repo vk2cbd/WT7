@@ -140,6 +140,19 @@ dec_degrees = -80.0
         self.assertEqual(app.cards["East"].target.text(), "050.00 / 80.00")
         self.assertEqual(app.cards["East"].az_comp.text(), "")
 
+    def test_antenna_card_shows_no_compensation_during_high_to_low_tracking(self):
+        app = self.make_app()
+        app.sessions = {"East": _FakeSession()}
+        app.positions = {"East": SimpleNamespace(azimuth=40.0, elevation=45.0)}
+        app.configs["East"].az_low_to_high_compensation = 0.5
+        app.tracking_kind = "source"
+        app.tracking_az_comp_force["East"] = False
+
+        app.apply_target(TargetPosition("Test", 30.0, 45.0))
+
+        self.assertEqual(app.cards["East"].target.text(), "030.00 / 45.00")
+        self.assertEqual(app.cards["East"].az_comp.text(), "AZ comp none")
+
     def test_tracking_state_uses_compensated_drive_target(self):
         app = self.make_app()
         session = _FakeSession()
