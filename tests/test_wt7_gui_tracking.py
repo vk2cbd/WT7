@@ -138,7 +138,7 @@ dec_degrees = -80.0
 
         self.assertEqual(app.source_name.text(), "Sun")
         self.assertEqual(app.cards["East"].target.text(), "050.00 / 80.00")
-        self.assertEqual(app.cards["East"].az_comp.text(), "")
+        self.assertEqual(app.cards["East"].az_comp.text(), "AZ comp --")
 
     def test_antenna_card_shows_no_compensation_during_high_to_low_tracking(self):
         app = self.make_app()
@@ -153,10 +153,10 @@ dec_degrees = -80.0
         self.assertEqual(app.cards["East"].target.text(), "030.00 / 45.00")
         self.assertEqual(app.cards["East"].az_comp.text(), "AZ comp none")
 
-    def test_az_comp_field_starts_blank_with_muted_style(self):
+    def test_az_comp_field_starts_visible_with_muted_style(self):
         app = self.make_app()
 
-        self.assertEqual(app.cards["East"].az_comp.text(), "")
+        self.assertEqual(app.cards["East"].az_comp.text(), "AZ comp --")
         self.assertEqual(app.cards["East"].az_comp.objectName(), "muted")
 
     def test_tracking_state_uses_compensated_drive_target(self):

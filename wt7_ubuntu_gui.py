@@ -16,7 +16,7 @@ from wt7_config import B210Calibration, B210_CAL_LEVELS_DBM, PowerConfig, ScanCo
 from wt7_logging import EventLogger
 from wt7_solar import sun_equatorial, sun_position
 from wt7_state import AppStateStore, SystemRunState
-APP_VERSION = "v0.16"
+APP_VERSION = "v0.17"
 
 def hms(seconds: float) -> str:
     seconds %= 86400.0; h=int(seconds//3600); m=int((seconds%3600)//60); s=int(seconds%60); return f"{h:02d}:{m:02d}:{s:02d}"
@@ -46,7 +46,7 @@ class AntennaCard(Panel):
         title=bold(name.upper()); title.setMinimumWidth(72); self.state=lbl('DISCONNECTED','stateStopped'); lock_width(self.state,'DISCONNECTED',18)
         self.az=bold('--.--',18); self.el=bold('--.--',18); lock_width(self.az,'359.99',12); lock_width(self.el,'090.00',12)
         self.az_err=lbl('--.--'); self.el_err=lbl('--.--'); lock_width(self.az_err,'+999.99',10); lock_width(self.el_err,'+999.99',10)
-        self.limits=lbl('SAFE','safe'); lock_width(self.limits,'FAULT',18); self.mode=lbl('--'); lock_width(self.mode,'Disconnected',10); self.target=lbl('--.-- / --.--'); lock_width(self.target,'359.99 / 090.00',12); self.az_comp=lbl('','muted'); lock_width(self.az_comp,'AZ comp +9.99',10)
+        self.limits=lbl('SAFE','safe'); lock_width(self.limits,'FAULT',18); self.mode=lbl('--'); lock_width(self.mode,'Disconnected',10); self.target=lbl('--.-- / --.--'); lock_width(self.target,'359.99 / 090.00',12); self.az_comp=lbl('AZ comp --','muted'); lock_width(self.az_comp,'AZ comp +9.99',10)
         g.addWidget(title,0,0,1,2); g.addWidget(self.state,0,8,1,2,Qt.AlignRight)
         g.addWidget(lbl('AZ','muted'),1,0); g.addWidget(self.az,1,1); g.addWidget(lbl('AZ err','muted'),1,3); g.addWidget(self.az_err,1,4); g.addWidget(lbl('Limits','muted'),1,5); g.addWidget(self.limits,1,6)
         g.addWidget(lbl('EL','muted'),2,0); g.addWidget(self.el,2,1); g.addWidget(lbl('EL err','muted'),2,3); g.addWidget(self.el_err,2,4); g.addWidget(lbl('Mode','muted'),2,5); g.addWidget(self.mode,2,6)
@@ -62,9 +62,9 @@ class AntennaCard(Panel):
         self.az.setText('--.--' if pos is None else f'{pos.azimuth:06.2f}'); self.el.setText('--.--' if pos is None else f'{pos.elevation:05.2f}')
     def set_target(self,target: Optional[TargetPosition], pos: Optional[Position], az_comp: Optional[float] = None):
         if not target:
-            self.target.setText('--.-- / --.--'); self.az_err.setText('--.--'); self.el_err.setText('--.--'); self.az_comp.setText(''); return
+            self.target.setText('--.-- / --.--'); self.az_err.setText('--.--'); self.el_err.setText('--.--'); self.az_comp.setText('AZ comp --'); return
         self.target.setText(f'{target.azimuth:06.2f} / {target.elevation:05.2f}')
-        if az_comp is None: self.az_comp.setText('')
+        if az_comp is None: self.az_comp.setText('AZ comp --')
         else: self.az_comp.setText(f'AZ comp {az_comp:+0.2f}' if abs(az_comp) >= 0.005 else 'AZ comp none')
         if pos: self.az_err.setText(f'{shortest_angle_delta(pos.azimuth,target.azimuth):+0.2f}'); self.el_err.setText(f'{target.elevation-pos.elevation:+0.2f}')
     def set_state(self,text):
