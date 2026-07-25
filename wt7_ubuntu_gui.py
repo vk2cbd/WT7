@@ -16,7 +16,7 @@ from wt7_config import B210Calibration, B210_CAL_LEVELS_DBM, PowerConfig, ScanCo
 from wt7_logging import EventLogger
 from wt7_solar import sun_equatorial, sun_position
 from wt7_state import AppStateStore, SystemRunState
-APP_VERSION = "v0.23"
+APP_VERSION = "v0.24"
 
 def hms(seconds: float) -> str:
     seconds %= 86400.0; h=int(seconds//3600); m=int((seconds%3600)//60); s=int(seconds%60); return f"{h:02d}:{m:02d}:{s:02d}"
@@ -1190,8 +1190,17 @@ class WT7App(QWidget):
         self.cards[antenna].set_state('YFACTOR')
         self.yfactor_thread=threading.Thread(target=lambda:self.yfactor_worker(dialog,antenna,label,cold_mode,cold_az,cold_el,cold_ra,cold_dec,count,dwell,alternate),daemon=True); self.yfactor_thread.start()
     def stop_yfactor(self): self.yfactor_stop.set(); self.set_status('Y Factor stop requested.')
+    def yfactor_resume_kind(self,label):
+        return {'Sun':'sun','Moon':'moon','Source':'source'}.get(label,'')
+    def finish_yfactor_state(self,antenna,resume_kind,should_resume):
+        self.yfactor_stop.clear(); self.yfactor_hot_label=''
+        self.set_antenna_target(antenna,None)
+        if should_resume and resume_kind:
+            self.start_tracking(resume_kind)
+        else:
+            self.cards[antenna].set_state('STOPPED')
     def yfactor_worker(self,dialog,antenna,label,cold_mode,cold_az,cold_el,cold_ra,cold_dec,count,dwell,alternate):
-        rows=[]; out=Path(self.config_path).parent/'yfactor'; out.mkdir(exist_ok=True); path=out/f"wt7_yfactor_{antenna.lower()}_{datetime.now():%Y%m%d-%H%M%S}.csv"; session=self.sessions[antenna]
+        rows=[]; completed=False; resume_kind=self.yfactor_resume_kind(label); out=Path(self.config_path).parent/'yfactor'; out.mkdir(exist_ok=True); path=out/f"wt7_yfactor_{antenna.lower()}_{datetime.now():%Y%m%d-%H%M%S}.csv"; session=self.sessions[antenna]
         try:
             for name,s in list(self.sessions.items()):
                 if name!=antenna: s.stop_all(); self.emit(lambda n:self.cards[n].set_state('STOPPED'),name)
@@ -1209,15 +1218,14 @@ class WT7App(QWidget):
                 ydb=results['hot']['power_value']-results['cold']['power_value']; rows.append({'local_time':datetime.now().astimezone().isoformat(timespec='seconds'),'antenna':antenna,'measurement':i,'hot_power':results['hot']['power_value'],'cold_power':results['cold']['power_value'],'power_unit':results['hot']['power_unit'],'y_factor_db':ydb,'hot_start_az_error':results['hot'].get('start_az_error'),'hot_start_el_error':results['hot'].get('start_el_error'),'hot_end_az_error':results['hot'].get('end_az_error'),'hot_end_el_error':results['hot'].get('end_el_error'),'cold_start_az_error':results['cold'].get('start_az_error'),'cold_start_el_error':results['cold'].get('start_el_error'),'cold_end_az_error':results['cold'].get('end_az_error'),'cold_end_el_error':results['cold'].get('end_el_error'),'hot_settle_attempts':results['hot'].get('settle_attempts'),'cold_settle_attempts':results['cold'].get('settle_attempts')})
             if rows:
                 with path.open('w',newline='',encoding='utf-8') as h: w=csv.DictWriter(h,fieldnames=list(rows[0])); w.writeheader(); w.writerows(rows)
-                avg=sum(r['y_factor_db'] for r in rows)/len(rows); msg=f'Y Factor {avg:0.1f} dB, n={len(rows)}'
+                avg=sum(r['y_factor_db'] for r in rows)/len(rows); msg=f'Y Factor {avg:0.1f} dB, n={len(rows)}'; completed=not self.yfactor_stop.is_set()
             else: msg='Y Factor stopped.'
             self.emit(lambda m:dialog.set_status(m),msg); self.emit(lambda m:self.set_status(m),msg)
         except Exception as exc:
             self.emit(lambda m:dialog.set_status(m),str(exc)); self.emit(lambda m:self.set_status(f'Y Factor fault: {m}'),str(exc))
         finally:
-            self.yfactor_stop.clear(); self.yfactor_hot_label=''
-            self.emit(lambda name:self.set_antenna_target(name,None),antenna)
-            self.emit(lambda name:self.cards[name].set_state('STOPPED'),antenna)
+            stopped=self.yfactor_stop.is_set()
+            self.emit(lambda data:self.finish_yfactor_state(*data),(antenna,resume_kind,completed and not stopped))
     def collect_yfactor_power(self,antenna,dwell,session=None,target_func=None,start_meta=None,hot_target_func=None,card_target=None):
         vals=[]; end=time.monotonic()+dwell; next_correction=time.monotonic()+self.yfactor_dwell_correction_interval(dwell)
         while time.monotonic()<end and not self.yfactor_stop.is_set():

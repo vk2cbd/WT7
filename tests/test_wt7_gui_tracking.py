@@ -404,6 +404,33 @@ dec_degrees = -80.0
         self.assertFalse(dialog.isModal())
         self.assertEqual(dialog.windowModality(), Qt.NonModal)
 
+    def test_finish_yfactor_resumes_tracking_after_completed_measurement(self):
+        app = self.make_app()
+        calls = []
+        app.start_tracking = lambda kind: calls.append(kind)
+        app.card_targets["East"] = TargetPosition("Cold Sky", 10.0, 80.0)
+        app.yfactor_stop.set()
+        app.yfactor_hot_label = "Moon"
+        app.cards["East"].set_state("YFACTOR")
+
+        app.finish_yfactor_state("East", "moon", True)
+
+        self.assertEqual(calls, ["moon"])
+        self.assertFalse(app.yfactor_stop.is_set())
+        self.assertEqual(app.yfactor_hot_label, "")
+        self.assertNotIn("East", app.card_targets)
+
+    def test_finish_yfactor_stop_does_not_resume_tracking(self):
+        app = self.make_app()
+        calls = []
+        app.start_tracking = lambda kind: calls.append(kind)
+        app.cards["East"].set_state("YFACTOR")
+
+        app.finish_yfactor_state("East", "moon", False)
+
+        self.assertEqual(calls, [])
+        self.assertEqual(app.cards["East"].state.text(), "STOPPED")
+
     def test_reference_update_uses_same_sun_target_for_source_pane(self):
         app = self.make_app()
         app.tracking_kind = "sun"
