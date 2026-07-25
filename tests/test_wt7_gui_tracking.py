@@ -112,6 +112,34 @@ dec_degrees = -80.0
         self.assertTrue(app.az_lh_compensation_for_tracking("East", session, TargetPosition("Sun", 0.12, 45.0), "TRACKING"))
         self.assertFalse(app.az_lh_compensation_for_tracking("East", session, TargetPosition("Sun", 0.05, 45.0), "TRACKING"))
 
+    def test_antenna_card_shows_compensated_drive_target_not_source_target(self):
+        app = self.make_app()
+        app.sessions = {"East": _FakeSession()}
+        app.positions = {"East": SimpleNamespace(azimuth=20.0, elevation=45.0)}
+        app.configs["East"].az_low_to_high_compensation = 0.5
+        app.tracking_kind = "source"
+
+        app.apply_target(TargetPosition("Test", 30.0, 45.0))
+
+        self.assertEqual(app.source_az.text(), "030.00")
+        self.assertEqual(app.cards["East"].target.text(), "030.50 / 45.00")
+        self.assertEqual(app.cards["East"].az_err.text(), "+10.50")
+        self.assertEqual(app.cards["East"].az_comp.text(), "AZ comp +0.50")
+
+    def test_card_target_override_suppresses_compensation_label(self):
+        app = self.make_app()
+        app.sessions = {"East": _FakeSession()}
+        app.positions = {"East": SimpleNamespace(azimuth=20.0, elevation=45.0)}
+        app.configs["East"].az_low_to_high_compensation = 0.5
+        app.tracking_kind = "sun"
+        app.apply_target(TargetPosition("Sun", 30.0, 45.0))
+
+        app.set_antenna_target("East", TargetPosition("Cold Sky", 50.0, 80.0))
+
+        self.assertEqual(app.source_name.text(), "Sun")
+        self.assertEqual(app.cards["East"].target.text(), "050.00 / 80.00")
+        self.assertEqual(app.cards["East"].az_comp.text(), "")
+
 
     def test_b210_clear_reading_blanks_display_and_measurement(self):
         app = self.make_app()
