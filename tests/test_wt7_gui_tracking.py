@@ -194,6 +194,23 @@ dec_degrees = -80.0
         self.assertEqual(app.cards["East"].az_rate.text(), "AZ rate  0.40 deg/s")
         self.assertEqual(app.cards["East"].el_rate.text(), "EL rate  0.20 deg/s")
 
+    def test_position_rate_averages_recent_samples(self):
+        app = self.make_app()
+        app.site.rate_average_samples = 3
+        app.sessions = {"East": _FakeSession()}
+        app.cards["East"].set_state("SLEWING")
+        app.position_rate_state["East"] = (
+            Position(0.0, 0.0, 0.0, 0.0),
+            time.monotonic() - 1.0,
+            [1.0, 2.0],
+            [3.0, 4.0],
+        )
+
+        app.update_position("East", Position(0.0, 0.0, 6.0, 6.0))
+
+        self.assertEqual(app.cards["East"].az_rate.text(), "AZ rate  3.00 deg/s")
+        self.assertEqual(app.cards["East"].el_rate.text(), "EL rate  4.33 deg/s")
+
     def test_position_update_clears_rates_when_drive_inactive(self):
         app = self.make_app()
         app.sessions = {"East": _FakeSession()}

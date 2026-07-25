@@ -16,7 +16,7 @@ from wt7_config import B210Calibration, B210_CAL_LEVELS_DBM, PowerConfig, ScanCo
 from wt7_logging import EventLogger
 from wt7_solar import sun_equatorial, sun_position
 from wt7_state import AppStateStore, SystemRunState
-APP_VERSION = "v0.19"
+APP_VERSION = "v0.20"
 
 def hms(seconds: float) -> str:
     seconds %= 86400.0; h=int(seconds//3600); m=int((seconds%3600)//60); s=int(seconds%60); return f"{h:02d}:{m:02d}:{s:02d}"
@@ -298,7 +298,7 @@ class TrackingDialog(SimpleDialog):
     def __init__(self,app):
         super().__init__(app,'Tracking'); tabs=QTabWidget(); self.main.addWidget(tabs)
         site=QWidget(); sg=QGridLayout(site); self.site_fields={}
-        specs=[('track_interval_seconds','Interval sec'),('az_track_tolerance_degrees','AZ start tol'),('el_track_tolerance_degrees','EL start tol'),('az_stop_tolerance_degrees','AZ stop tol'),('el_stop_tolerance_degrees','EL stop tol'),('az_slow_speed','AZ slow speed'),('el_slow_speed','EL slow speed'),('az_slow_threshold_degrees','AZ slow deg'),('el_slow_threshold_degrees','EL slow deg')]
+        specs=[('track_interval_seconds','Interval sec'),('az_track_tolerance_degrees','AZ start tol'),('el_track_tolerance_degrees','EL start tol'),('az_stop_tolerance_degrees','AZ stop tol'),('el_stop_tolerance_degrees','EL stop tol'),('az_slow_speed','AZ slow speed'),('el_slow_speed','EL slow speed'),('az_slow_threshold_degrees','AZ slow deg'),('el_slow_threshold_degrees','EL slow deg'),('rate_average_samples','Rate avg samples')]
         for r,(key,label) in enumerate(specs): self.site_fields[key]=self.edit(getattr(app.site,key)); sg.addWidget(lbl(label),r,0); sg.addWidget(self.site_fields[key],r,1)
         tabs.addTab(site,'Global'); self.ant_fields={}
         for name,cfg in app.configs.items():
@@ -308,7 +308,7 @@ class TrackingDialog(SimpleDialog):
         self.buttons()
     def accept(self):
         try:
-            for key,w in self.site_fields.items(): setattr(self.app.site,key,self.to_int(w,key) if key.endswith('speed') else self.to_float(w,key))
+            for key,w in self.site_fields.items(): setattr(self.app.site,key,max(1,self.to_int(w,key)) if key.endswith('speed') or key.endswith('samples') else self.to_float(w,key))
             for name,f in self.ant_fields.items():
                 cfg=self.app.configs[name]; cfg.gui_speed=self.to_int(f['gui_speed'],'Manual speed'); cfg.az_track_speed=self.to_int(f['az_track_speed'],'AZ speed'); cfg.el_track_speed=self.to_int(f['el_track_speed'],'EL speed'); cfg.az_low_to_high_compensation=self.to_float(f['az_low_to_high_compensation'],'AZ L-H comp')
             save_site_config(self.app.config_path,self.app.site); save_configs(self.app.config_path,self.app.configs); self.app.set_status('Tracking settings saved.'); super().accept()
@@ -950,20 +950,33 @@ class WT7App(QWidget):
         now=time.monotonic(); previous=self.position_rate_state.get(name)
         card=self.cards.get(name)
         if not card:
-            self.position_rate_state[name]=(pos,now); return
+            self.position_rate_state[name]=(pos,now,[],[]); return
         if not self.antenna_rate_active(name):
-            self.position_rate_state[name]=(pos,now)
+            self.position_rate_state[name]=(pos,now,[],[])
             card.set_rates(None,None); return
         if not previous:
-            self.position_rate_state[name]=(pos,now)
+            self.position_rate_state[name]=(pos,now,[],[])
             card.set_rates(0.0,0.0); return
-        prev_pos,prev_time=previous; dt=now-prev_time
+        prev_pos,prev_time,az_history,el_history=self.rate_state_parts(previous); dt=now-prev_time
         if dt < RATE_MIN_INTERVAL_SECONDS:
             return
-        self.position_rate_state[name]=(pos,now)
         az_rate=abs(shortest_angle_delta(prev_pos.azimuth,pos.azimuth))/dt
         el_rate=abs(pos.elevation-prev_pos.elevation)/dt
+        az_history,az_rate=self.averaged_rate(az_history,az_rate)
+        el_history,el_rate=self.averaged_rate(el_history,el_rate)
+        self.position_rate_state[name]=(pos,now,az_history,el_history)
         card.set_rates(az_rate,el_rate)
+    def rate_state_parts(self,previous):
+        if len(previous) == 2:
+            prev_pos,prev_time=previous; return prev_pos,prev_time,[],[]
+        prev_pos,prev_time,az_history,el_history=previous
+        return prev_pos,prev_time,list(az_history),list(el_history)
+    def rate_average_samples(self):
+        try: return max(1,int(getattr(self.site,'rate_average_samples',3)))
+        except Exception: return 3
+    def averaged_rate(self,history,value):
+        history=(history+[value])[-self.rate_average_samples():]
+        return history,sum(history)/len(history)
     def mark_fault(self,name,error):
         self.cards[name].set_state('FAULT'); self.set_status(f'{name}: {error}'); self.event_log.error('ANTENNA_FAULT',antenna=name,error=error)
     def is_slew_timeout_error(self,error):

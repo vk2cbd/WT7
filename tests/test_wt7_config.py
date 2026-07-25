@@ -5,6 +5,7 @@ import unittest
 from wt7_config import (
     B210Calibration,
     ScanConfig,
+    SiteConfig,
     YFactorConfig,
     load_b210_calibration,
     load_configs,
@@ -13,6 +14,7 @@ from wt7_config import (
     load_yfactor_config,
     save_b210_calibration,
     save_scan_config,
+    save_site_config,
     save_yfactor_config,
 )
 
@@ -60,6 +62,20 @@ class ConfigEncodingTests(unittest.TestCase):
             scan = load_scan_config(path)
         self.assertFalse(scan.az_scan_high_to_low)
         self.assertEqual(scan.antenna_name, "West")
+
+    def test_rate_average_samples_defaults_to_three(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "wt7_ubuntu.ini"
+            path.write_text("[site]\nlatitude = -32.724\nlongitude = 152.130167\n", encoding="utf-8")
+            site = load_site_config(path)
+        self.assertEqual(site.rate_average_samples, 3)
+
+    def test_rate_average_samples_save_round_trip(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "wt7_ubuntu.ini"
+            save_site_config(path, SiteConfig(rate_average_samples=5))
+            site = load_site_config(path)
+        self.assertEqual(site.rate_average_samples, 5)
 
 
     def test_yfactor_workflow_defaults_to_alternate(self):

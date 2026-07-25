@@ -16,6 +16,7 @@ log_level = INFO
 timeout_enabled = no
 timeout_minutes = 60.0
 timeout_action = disconnect
+rate_average_samples = 3
 
 [power]
 center_frequency_hz = 1200000000

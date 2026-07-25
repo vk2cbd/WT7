@@ -38,6 +38,7 @@ class SiteConfig:
     timeout_enabled: bool = False
     timeout_minutes: float = 60.0
     timeout_action: str = "disconnect"
+    rate_average_samples: int = 3
 
 
 @dataclass
@@ -135,6 +136,7 @@ def load_site_config(path: Union[str, Path]) -> SiteConfig:
         timeout_enabled=parser.getboolean("site", "timeout_enabled", fallback=False),
         timeout_minutes=parser.getfloat("site", "timeout_minutes", fallback=60.0),
         timeout_action=timeout_action,
+        rate_average_samples=max(1, parser.getint("site", "rate_average_samples", fallback=3)),
     )
 
 
@@ -549,6 +551,7 @@ def _site_section(site: SiteConfig) -> dict[str, str]:
         "timeout_enabled": "yes" if site.timeout_enabled else "no",
         "timeout_minutes": f"{site.timeout_minutes:.1f}",
         "timeout_action": site.timeout_action,
+        "rate_average_samples": str(max(1, int(site.rate_average_samples))),
     }
 
 
