@@ -179,7 +179,8 @@ dec_degrees = -80.0
         self.assertIn("First event.", text)
         self.assertIn("Second event.", text)
         self.assertIn("Third event.", text)
-        self.assertEqual(app.event_history[-1].split("  ", 1)[1], "Third event.")
+        self.assertEqual(text.splitlines()[0].split("  ", 1)[1], "Third event.")
+        self.assertEqual(app.event_history[0].split("  ", 1)[1], "Third event.")
 
     def test_position_update_populates_rates_when_drive_active(self):
         app = self.make_app()

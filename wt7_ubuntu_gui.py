@@ -16,7 +16,7 @@ from wt7_config import B210Calibration, B210_CAL_LEVELS_DBM, PowerConfig, ScanCo
 from wt7_logging import EventLogger
 from wt7_solar import sun_equatorial, sun_position
 from wt7_state import AppStateStore, SystemRunState
-APP_VERSION = "v0.21"
+APP_VERSION = "v0.22"
 
 def hms(seconds: float) -> str:
     seconds %= 86400.0; h=int(seconds//3600); m=int((seconds%3600)//60); s=int(seconds%60); return f"{h:02d}:{m:02d}:{s:02d}"
@@ -645,11 +645,10 @@ class WT7App(QWidget):
     def set_status(self,msg):
         self.status.setText(msg)
         line=f"{datetime.now().strftime('%H:%M:%S')}  {msg}"
-        self.event_history.append(line)
+        self.event_history.insert(0,line)
         if hasattr(self,'event_view'):
-            bar=self.event_view.verticalScrollBar(); was_at_bottom=bar.value() >= bar.maximum()-2
-            self.event_view.appendPlainText(line)
-            if was_at_bottom: bar.setValue(bar.maximum())
+            self.event_view.setPlainText('\n'.join(self.event_history))
+            self.event_view.verticalScrollBar().setValue(0)
         self.state_store.set_status(msg,SystemRunState.IDLE)
     def eventFilter(self,obj,event):
         if event.type() in (QEvent.MouseButtonPress,QEvent.KeyPress):
