@@ -16,7 +16,7 @@ from wt7_config import B210Calibration, B210_CAL_LEVELS_DBM, PowerConfig, ScanCo
 from wt7_logging import EventLogger
 from wt7_solar import sun_equatorial, sun_position
 from wt7_state import AppStateStore, SystemRunState
-APP_VERSION = "v0.12"
+APP_VERSION = "v0.13"
 
 def hms(seconds: float) -> str:
     seconds %= 86400.0; h=int(seconds//3600); m=int((seconds%3600)//60); s=int(seconds%60); return f"{h:02d}:{m:02d}:{s:02d}"
@@ -768,8 +768,8 @@ class WT7App(QWidget):
         try:
             target=self.current_tracking_target(kind)
             effective_target=self.apply_scan_offset(target,name)
-            display_state=self.movement_display_state(name,session,effective_target,'TRACKING')
             force_comp=self.az_lh_compensation_for_tracking(name,session,effective_target,'TRACKING')
+            display_state=self.movement_display_state(name,session,effective_target,'TRACKING')
             self.emit(lambda data:self.cards[data[0]].set_state(data[1]),(name,display_state))
             session.config.limits.assert_position_allowed(effective_target.azimuth,effective_target.elevation)
             def live_target(_pos):
@@ -851,6 +851,8 @@ class WT7App(QWidget):
         if activity != 'TRACKING': return 'SLEWING'
         pos=self.positions.get(name)
         if not pos: return 'SLEWING'
+        target,_az_comp=self.drive_target_for_display(name,target)
+        if not target: return 'SLEWING'
         try: az_error=abs(session.config.limits.azimuth_delta_to_target(pos.azimuth,target.azimuth))
         except Exception: az_error=abs(shortest_angle_delta(pos.azimuth,target.azimuth))
         el_error=abs(target.elevation-pos.elevation); gross_az=max(self.site.az_slow_threshold_degrees,self.az_tol()*3.0); gross_el=max(self.site.el_slow_threshold_degrees,self.el_tol()*3.0)

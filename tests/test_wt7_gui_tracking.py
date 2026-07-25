@@ -140,6 +140,21 @@ dec_degrees = -80.0
         self.assertEqual(app.cards["East"].target.text(), "050.00 / 80.00")
         self.assertEqual(app.cards["East"].az_comp.text(), "")
 
+    def test_tracking_state_uses_compensated_drive_target(self):
+        app = self.make_app()
+        session = _FakeSession()
+        app.sessions = {"East": session}
+        app.positions = {"East": SimpleNamespace(azimuth=205.15, elevation=42.69)}
+        app.configs["East"].az_low_to_high_compensation = 0.5
+        app.tracking_kind = "source"
+        app.tracking_az_comp_force["East"] = True
+        app.site.az_slow_threshold_degrees = 0.3
+        app.site.el_slow_threshold_degrees = 0.3
+
+        state = app.movement_display_state("East", session, TargetPosition("LMC", 204.63, 42.64), "TRACKING")
+
+        self.assertEqual(state, "TRACKING")
+
 
     def test_b210_clear_reading_blanks_display_and_measurement(self):
         app = self.make_app()
