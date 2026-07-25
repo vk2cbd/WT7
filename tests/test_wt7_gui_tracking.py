@@ -8,6 +8,7 @@ from types import SimpleNamespace
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
+from PyQt5.QtCore import Qt
 from PyQt5.QtWidgets import QApplication
 
 from wt7_antenna import Axis, Position
@@ -354,6 +355,54 @@ dec_degrees = -80.0
         app.set_antenna_target("East", None)
 
         self.assertNotIn("East", app.card_targets)
+
+    def test_yfactor_dwell_refreshes_tracking_target_during_measurement(self):
+        app = self.make_app()
+        app.site.track_interval_seconds = 0.1
+        target = TargetPosition("Moon", 30.0, 40.0)
+        hot = TargetPosition("Moon", 30.0, 40.0)
+        slews = []
+
+        class _YFactorSession(_FakeSession):
+            def __init__(self):
+                super().__init__()
+                self.config.az_track_speed = 100
+                self.config.el_track_speed = 100
+
+            def guarded_slew_to(self, azimuth, elevation, *args, **kwargs):
+                slews.append((azimuth, elevation, kwargs.get("target_callback")))
+
+            def read_position(self):
+                return Position(0.0, 0.0, target.azimuth, target.elevation)
+
+        app.power.current_power_measurement = lambda antenna: {
+            "power_value": -30.0,
+            "power_dbfs": -30.0,
+            "power_unit": "dBFS",
+            "power_channel": "A",
+        }
+
+        result = app.collect_yfactor_power(
+            "East",
+            0.25,
+            _YFactorSession(),
+            lambda: target,
+            hot_target_func=lambda: hot,
+        )
+
+        self.assertGreaterEqual(len(slews), 1)
+        self.assertEqual(slews[0][0:2], (30.0, 40.0))
+        self.assertEqual(result["power_unit"], "dBFS")
+
+    def test_yfactor_dialog_opens_modeless(self):
+        app = self.make_app()
+
+        app.open_yfactor_dialog()
+
+        self.assertEqual(len(app.modeless_dialogs), 1)
+        dialog = app.modeless_dialogs[0]
+        self.assertFalse(dialog.isModal())
+        self.assertEqual(dialog.windowModality(), Qt.NonModal)
 
     def test_reference_update_uses_same_sun_target_for_source_pane(self):
         app = self.make_app()

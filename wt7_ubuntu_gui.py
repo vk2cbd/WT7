@@ -16,7 +16,7 @@ from wt7_config import B210Calibration, B210_CAL_LEVELS_DBM, PowerConfig, ScanCo
 from wt7_logging import EventLogger
 from wt7_solar import sun_equatorial, sun_position
 from wt7_state import AppStateStore, SystemRunState
-APP_VERSION = "v0.22"
+APP_VERSION = "v0.23"
 
 def hms(seconds: float) -> str:
     seconds %= 86400.0; h=int(seconds//3600); m=int((seconds%3600)//60); s=int(seconds%60); return f"{h:02d}:{m:02d}:{s:02d}"
@@ -685,7 +685,8 @@ class WT7App(QWidget):
     def open_calibration_dialog(self): CalibrationDialog(self).exec_()
     def open_scan_dialog(self):
         d=ScanSettingsDialog(self); d.setWindowModality(Qt.NonModal); d.setAttribute(Qt.WA_DeleteOnClose,True); self.modeless_dialogs.append(d); d.destroyed.connect(lambda _obj,d=d: self.modeless_dialogs.remove(d) if d in self.modeless_dialogs else None); d.show()
-    def open_yfactor_dialog(self): YFactorSettingsDialog(self).exec_()
+    def open_yfactor_dialog(self):
+        d=YFactorSettingsDialog(self); d.setWindowFlags(d.windowFlags()|Qt.Window); d.setWindowModality(Qt.NonModal); self.modeless_dialogs.append(d); d.destroyed.connect(lambda _obj,d=d: self.modeless_dialogs.remove(d) if d in self.modeless_dialogs else None); d.show()
     def open_encoders_dialog(self): EncodersDialog(self).exec_()
     def open_peak_calibration(self): PeakCalibrationDialog(self).exec_()
     def open_b210_calibration(self): B210CalibrationDialog(self).exec_()
@@ -1158,6 +1159,16 @@ class WT7App(QWidget):
         return target.azimuth,target.elevation
     def yfactor_position_error(self,session,pos,target):
         return session.config.limits.azimuth_delta_to_target(pos.azimuth,target.azimuth), target.elevation-pos.elevation
+    def yfactor_dwell_correction_interval(self,dwell):
+        interval=getattr(self.site,'track_interval_seconds',1.0) or 1.0
+        return max(0.1,min(float(interval),1.0,float(dwell)))
+    def refresh_yfactor_dwell_tracking(self,antenna,session,target,hot_target=None,card_target=None,target_func=None):
+        if hot_target: self.emit(lambda t:self.apply_target(t),hot_target)
+        self.emit(lambda data:self.set_antenna_target(*data),(antenna,card_target))
+        target_callback=(lambda _p: (target_func().azimuth,target_func().elevation)) if target_func else None
+        session.guarded_slew_to(target.azimuth,target.elevation,session.config.az_track_speed,session.config.el_track_speed,self.yfactor_stop,self.az_tol(),self.el_tol(),self.site.az_stop_tolerance_degrees,self.site.el_stop_tolerance_degrees,self.site.az_slow_speed,self.site.el_slow_speed,self.site.az_slow_threshold_degrees,self.site.el_slow_threshold_degrees,lambda p:self.emit(lambda data:self.update_position(*data),(antenna,p)),target_callback=target_callback)
+        pos=session.read_position(); self.emit(lambda data:self.update_position(*data),(antenna,pos))
+        return target,pos
     def yfactor_slew_and_settle(self,session,antenna,phase,label,cold_mode,cold_az,cold_el,cold_ra,cold_dec,dialog):
         last={}
         for attempt in range(1,4):
@@ -1193,7 +1204,7 @@ class WT7App(QWidget):
                     card_target=target if phase!='hot' else None
                     self.emit(lambda s:dialog.set_status(s),f'Measurement {i}/{count}: {phase}.'); self.emit(lambda t:self.apply_target(t),hot); self.emit(lambda data:self.set_antenna_target(*data),(antenna,card_target)); self.emit(lambda data:self.cards[data[0]].set_state(data[1]),(antenna,'YFACTOR'))
                     start_meta=self.yfactor_slew_and_settle(session,antenna,phase,label,cold_mode,cold_az,cold_el,cold_ra,cold_dec,dialog)
-                    results[phase]=self.collect_yfactor_power(antenna,dwell,session,lambda phase=phase:self.yfactor_phase_target(phase,label,cold_mode,cold_az,cold_el,cold_ra,cold_dec),start_meta)
+                    results[phase]=self.collect_yfactor_power(antenna,dwell,session,lambda phase=phase:self.yfactor_phase_target(phase,label,cold_mode,cold_az,cold_el,cold_ra,cold_dec),start_meta,lambda label=label:self.yfactor_hot_target(label),card_target)
                 if self.yfactor_stop.is_set(): break
                 ydb=results['hot']['power_value']-results['cold']['power_value']; rows.append({'local_time':datetime.now().astimezone().isoformat(timespec='seconds'),'antenna':antenna,'measurement':i,'hot_power':results['hot']['power_value'],'cold_power':results['cold']['power_value'],'power_unit':results['hot']['power_unit'],'y_factor_db':ydb,'hot_start_az_error':results['hot'].get('start_az_error'),'hot_start_el_error':results['hot'].get('start_el_error'),'hot_end_az_error':results['hot'].get('end_az_error'),'hot_end_el_error':results['hot'].get('end_el_error'),'cold_start_az_error':results['cold'].get('start_az_error'),'cold_start_el_error':results['cold'].get('start_el_error'),'cold_end_az_error':results['cold'].get('end_az_error'),'cold_end_el_error':results['cold'].get('end_el_error'),'hot_settle_attempts':results['hot'].get('settle_attempts'),'cold_settle_attempts':results['cold'].get('settle_attempts')})
             if rows:
@@ -1207,9 +1218,14 @@ class WT7App(QWidget):
             self.yfactor_stop.clear(); self.yfactor_hot_label=''
             self.emit(lambda name:self.set_antenna_target(name,None),antenna)
             self.emit(lambda name:self.cards[name].set_state('STOPPED'),antenna)
-    def collect_yfactor_power(self,antenna,dwell,session=None,target_func=None,start_meta=None):
-        vals=[]; end=time.monotonic()+dwell
+    def collect_yfactor_power(self,antenna,dwell,session=None,target_func=None,start_meta=None,hot_target_func=None,card_target=None):
+        vals=[]; end=time.monotonic()+dwell; next_correction=time.monotonic()+self.yfactor_dwell_correction_interval(dwell)
         while time.monotonic()<end and not self.yfactor_stop.is_set():
+            if session and target_func and time.monotonic()>=next_correction:
+                target=target_func(); hot_target=hot_target_func() if hot_target_func else None
+                self.refresh_yfactor_dwell_tracking(antenna,session,target,hot_target,card_target,target_func)
+                next_correction=time.monotonic()+self.yfactor_dwell_correction_interval(dwell)
+                if self.yfactor_stop.is_set(): break
             m=self.power.current_power_measurement(antenna)
             if m: vals.append(m)
             time.sleep(0.1)
