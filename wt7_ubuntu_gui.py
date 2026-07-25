@@ -16,7 +16,7 @@ from wt7_config import B210Calibration, B210_CAL_LEVELS_DBM, PowerConfig, ScanCo
 from wt7_logging import EventLogger
 from wt7_solar import sun_equatorial, sun_position
 from wt7_state import AppStateStore, SystemRunState
-APP_VERSION = "v0.26"
+APP_VERSION = "v0.27"
 
 def hms(seconds: float) -> str:
     seconds %= 86400.0; h=int(seconds//3600); m=int((seconds%3600)//60); s=int(seconds%60); return f"{h:02d}:{m:02d}:{s:02d}"
@@ -1166,7 +1166,7 @@ class WT7App(QWidget):
         if hot_target: self.emit(lambda t:self.apply_target(t),hot_target)
         self.emit(lambda data:self.set_antenna_target(*data),(antenna,card_target))
         target_callback=(lambda _p: (target_func().azimuth,target_func().elevation)) if target_func else None
-        session.guarded_slew_to(target.azimuth,target.elevation,session.config.az_track_speed,session.config.el_track_speed,self.yfactor_stop,self.az_tol(),self.el_tol(),self.site.az_stop_tolerance_degrees,self.site.el_stop_tolerance_degrees,self.site.az_slow_speed,self.site.el_slow_speed,self.site.az_slow_threshold_degrees,self.site.el_slow_threshold_degrees,lambda p:self.emit(lambda data:self.update_position(*data),(antenna,p)),target_callback=target_callback)
+        session.guarded_slew_to(target.azimuth,target.elevation,self.site.az_slow_speed,self.site.el_slow_speed,self.yfactor_stop,self.az_tol(),self.el_tol(),self.site.az_stop_tolerance_degrees,self.site.el_stop_tolerance_degrees,self.site.az_slow_speed,self.site.el_slow_speed,self.site.az_slow_threshold_degrees,self.site.el_slow_threshold_degrees,lambda p:self.emit(lambda data:self.update_position(*data),(antenna,p)),target_callback=target_callback)
         pos=session.read_position(); self.emit(lambda data:self.update_position(*data),(antenna,pos))
         return target,pos
     def yfactor_slew_and_settle(self,session,antenna,phase,label,cold_mode,cold_az,cold_el,cold_ra,cold_dec,dialog):
