@@ -6,7 +6,7 @@ import argparse, csv, math, queue, threading, time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
-from PyQt5.QtCore import Qt, QSize, QTimer, pyqtSignal
+from PyQt5.QtCore import Qt, QSize, QTimer, pyqtSignal, QEvent
 from PyQt5.QtGui import QFont, QPainter, QPen, QColor
 from PyQt5.QtWidgets import QApplication, QCheckBox, QComboBox, QDialog, QDialogButtonBox, QFrame, QGridLayout, QHBoxLayout, QLabel, QLineEdit, QMessageBox, QPushButton, QTabWidget, QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget
 from wt7_antenna import Axis, Direction, Position, SafeAntenna, shortest_angle_delta
@@ -16,7 +16,7 @@ from wt7_config import B210Calibration, B210_CAL_LEVELS_DBM, PowerConfig, ScanCo
 from wt7_logging import EventLogger
 from wt7_solar import sun_equatorial, sun_position
 from wt7_state import AppStateStore, SystemRunState
-APP_VERSION = "v0.10"
+APP_VERSION = "v0.11"
 
 def hms(seconds: float) -> str:
     seconds %= 86400.0; h=int(seconds//3600); m=int((seconds%3600)//60); s=int(seconds%60); return f"{h:02d}:{m:02d}:{s:02d}"
@@ -570,8 +570,9 @@ PowerMeterPanel = B210Panel
 class WT7App(QWidget):
     def __init__(self,config_path):
         super().__init__(); self.config_path=Path(config_path); self.configs=load_configs(self.config_path); self.site=load_site_config(self.config_path); self.power_config=load_power_config(self.config_path); self.sources=load_sources(self.config_path); self.selected_source_name=self.site.selected_source if self.site.selected_source in self.sources else next(iter(self.sources), '')
-        self.event_log=EventLogger(Path('logs'),self.site.log_retention_days,self.site.log_level); self.state_store=AppStateStore(); self.sessions={}; self.positions={}; self.cards={}; self.current_target=None; self.card_targets={}; self.tracking_kind=''; self.tracking_stop=threading.Event(); self.jog_stops={}; self.b210_stop=threading.Event(); self.b210_thread=None; self.events=queue.Queue(); self.log_handle=None; self.log_writer=None; self.scan_stop=threading.Event(); self.scan_thread=None; self.scan_antenna_name=''; self.scan_axis=None; self.scan_offset_degrees=0.0; self.scan_offset_lock=threading.Lock(); self.scan_result_dialogs=[]; self.yfactor_stop=threading.Event(); self.yfactor_thread=None; self.yfactor_hot_label=''; self.peak_stop=threading.Event(); self.peak_thread=None; self.tracking_nominal_az={}; self.modeless_dialogs=[]; self.active_scan_antenna=''; self.active_scan_dialog=None; self.scan_resume_kind=''
+        self.event_log=EventLogger(Path('logs'),self.site.log_retention_days,self.site.log_level); self.state_store=AppStateStore(); self.sessions={}; self.positions={}; self.cards={}; self.current_target=None; self.card_targets={}; self.tracking_kind=''; self.tracking_stop=threading.Event(); self.jog_stops={}; self.b210_stop=threading.Event(); self.b210_thread=None; self.events=queue.Queue(); self.log_handle=None; self.log_writer=None; self.scan_stop=threading.Event(); self.scan_thread=None; self.scan_antenna_name=''; self.scan_axis=None; self.scan_offset_degrees=0.0; self.scan_offset_lock=threading.Lock(); self.scan_result_dialogs=[]; self.yfactor_stop=threading.Event(); self.yfactor_thread=None; self.yfactor_hot_label=''; self.peak_stop=threading.Event(); self.peak_thread=None; self.tracking_nominal_az={}; self.modeless_dialogs=[]; self.active_scan_antenna=''; self.active_scan_dialog=None; self.scan_resume_kind=''; self.last_user_activity=time.monotonic(); self.timeout_in_progress=False
         self.setWindowTitle(f'WT7 ANTENNA CONTROLLER {APP_VERSION}'); self.resize(1120,780); self.setMinimumSize(1080,720); self.build_ui(); self.style_ui(); self.set_status('Load config, connect antennas, then use guarded jogs.'); self.event_log.info('APP_START',version=APP_VERSION,config=str(config_path))
+        QApplication.instance().installEventFilter(self)
         self.t_ref=QTimer(self); self.t_ref.timeout.connect(self.update_reference); self.t_ref.start(1000); self.t_evt=QTimer(self); self.t_evt.timeout.connect(self.process_events); self.t_evt.start(100); self.t_pos=QTimer(self); self.t_pos.timeout.connect(self.poll_positions); self.t_pos.start(1000)
     def build_ui(self):
         main=QVBoxLayout(self); main.setContentsMargins(18,10,18,10); main.setSpacing(8)
@@ -592,6 +593,7 @@ class WT7App(QWidget):
         sr.addWidget(lbl('EL','muted'),0,4); self.source_el=bold('--.--',14); lock_width(self.source_el,'-90.00',12); sr.addWidget(self.source_el,0,5)
         sr.addWidget(lbl('HA','muted'),0,6); self.source_ha=bold('--:--',14); lock_width(self.source_ha,'-12:00',12); sr.addWidget(self.source_ha,0,7)
         self.sun=bold('SUN AZ --.-- EL --.--'); self.moon=bold('MOON AZ --.-- EL --.--'); lock_width(self.sun,'SUN AZ 359.99 EL -90.00',12); lock_width(self.moon,'MOON AZ 359.99 EL -90.00',12); sr.addWidget(self.sun,1,0,1,2); sr.addWidget(self.moon,1,2,1,5)
+        self.timeout_label=lbl('Timeout off'); lock_width(self.timeout_label,'Timeout 999:59 to disconnect',10); sr.addWidget(self.timeout_label,2,0,1,7)
         ref=Panel(); ref.setMaximumWidth(260); rg=QGridLayout(ref); rg.setContentsMargins(8,7,8,7); rg.setVerticalSpacing(6); self.local=lbl('Local --'); self.utc=lbl('UTC --'); self.lmst=lbl('LMST --'); lock_width(self.local,'Local 2026-07-18 20:42:18 AEST',10); lock_width(self.utc,'UTC 2026-07-18 10:42:18',10); lock_width(self.lmst,'LMST 16:35:51',10); rg.addWidget(self.local,0,0); rg.addWidget(self.utc,1,0); rg.addWidget(self.lmst,2,0)
         header.addWidget(src,0); header.addWidget(ref,0); header.addStretch(1); main.addLayout(header)
         self.status=lbl('')
@@ -632,6 +634,32 @@ class WT7App(QWidget):
         self.status.setText(msg); self.ev2.setText(self.ev1.text() if hasattr(self,'ev1') else '');
         if hasattr(self,'ev1'): self.ev1.setText(f"{datetime.now().strftime('%H:%M:%S')}  {msg}")
         self.state_store.set_status(msg,SystemRunState.IDLE)
+    def eventFilter(self,obj,event):
+        if event.type() in (QEvent.MouseButtonPress,QEvent.KeyPress):
+            self.last_user_activity=time.monotonic()
+            if self.timeout_in_progress and self.sessions:
+                self.timeout_in_progress=False
+        return super().eventFilter(obj,event)
+    def update_timeout_display(self):
+        if not hasattr(self,'timeout_label'): return
+        if not self.site.timeout_enabled:
+            self.timeout_label.setText('Timeout off'); return
+        if not self.sessions:
+            self.timeout_label.setText('Timeout stopped'); return
+        timeout_seconds=max(60.0,float(self.site.timeout_minutes)*60.0)
+        remaining=max(0.0,timeout_seconds-(time.monotonic()-self.last_user_activity))
+        total=int(math.ceil(remaining)); minutes,seconds=divmod(total,60)
+        action='park' if self.site.timeout_action == 'park_disconnect' else 'disconnect'
+        self.timeout_label.setText(f'Timeout {minutes:02d}:{seconds:02d} to {action}')
+    def check_app_timeout(self):
+        if not self.site.timeout_enabled or self.timeout_in_progress or not self.sessions: return
+        timeout_seconds=max(60.0,float(self.site.timeout_minutes)*60.0)
+        if time.monotonic()-self.last_user_activity < timeout_seconds: return
+        self.timeout_in_progress=True; action=self.site.timeout_action; self.event_log.warn('APP_TIMEOUT',action=action,timeout_minutes=self.site.timeout_minutes)
+        if action == 'park_disconnect':
+            self.set_status('Timeout: parking antennas.'); self.park_all()
+        else:
+            self.set_status('Timeout: disconnecting controllers.'); self.disconnect_all()
     def info(self,msg): QMessageBox.information(self,'WT7',msg)
     def open_log_hint(self): self.info('Event logs are in the logs directory beside the app.')
     def open_limits(self): LimitsDialog(self).exec_()
@@ -670,6 +698,8 @@ class WT7App(QWidget):
         self.run_thread(worker,'Disconnect')
     def finish_disconnect(self,name):
         self.positions.pop(name,None); self.cards[name].set_position(None); self.cards[name].set_target(None,None); self.cards[name].set_state('DISCONNECTED'); self.set_status(f'{name} disconnected.')
+        if not self.sessions:
+            self.timeout_in_progress=False
     def stop_tracking(self):
         self.tracking_stop.set(); self.tracking_nominal_az.clear()
         for n in self.sessions:
@@ -840,6 +870,7 @@ class WT7App(QWidget):
         else: return '--'
         return ha_text(lst-ra)
     def update_reference(self):
+        self.update_timeout_display(); self.check_app_timeout()
         now=datetime.now().astimezone(); utc=now.astimezone(timezone.utc); self.local.setText(f'Local {now:%Y-%m-%d %H:%M:%S %Z}'); self.utc.setText(f'UTC {utc:%Y-%m-%d %H:%M:%S}'); self.lmst.setText(f'LMST {hms(local_sidereal_time(self.site.longitude,utc)/15.0*3600)}')
         sun=self.target_for_kind('sun'); moon=self.target_for_kind('moon'); self.sun.setText(f'SUN AZ {sun.azimuth:06.2f} EL {sun.elevation:06.2f}'); self.moon.setText(f'MOON AZ {moon.azimuth:06.2f} EL {moon.elevation:06.2f}')
         if self.tracking_kind:
