@@ -16,7 +16,7 @@ from wt7_config import B210Calibration, B210_CAL_LEVELS_DBM, PowerConfig, ScanCo
 from wt7_logging import EventLogger
 from wt7_solar import sun_equatorial, sun_position
 from wt7_state import AppStateStore, SystemRunState
-APP_VERSION = "v0.17"
+APP_VERSION = "v0.18"
 
 def hms(seconds: float) -> str:
     seconds %= 86400.0; h=int(seconds//3600); m=int((seconds%3600)//60); s=int(seconds%60); return f"{h:02d}:{m:02d}:{s:02d}"
@@ -41,25 +41,30 @@ class Panel(QFrame):
 class AntennaCard(Panel):
     jog_pressed=pyqtSignal(str,str); jog_released=pyqtSignal(str); stop_clicked=pyqtSignal(str)
     def __init__(self,name):
-        super().__init__(); self.name=name; self.setMinimumHeight(126); self.setMaximumHeight(138)
+        super().__init__(); self.name=name; self.setMinimumHeight(146); self.setMaximumHeight(162)
         g=QGridLayout(self); g.setContentsMargins(10,8,10,8); g.setHorizontalSpacing(10); g.setVerticalSpacing(5)
         title=bold(name.upper()); title.setMinimumWidth(72); self.state=lbl('DISCONNECTED','stateStopped'); lock_width(self.state,'DISCONNECTED',18)
         self.az=bold('--.--',18); self.el=bold('--.--',18); lock_width(self.az,'359.99',12); lock_width(self.el,'090.00',12)
         self.az_err=lbl('--.--'); self.el_err=lbl('--.--'); lock_width(self.az_err,'+999.99',10); lock_width(self.el_err,'+999.99',10)
         self.limits=lbl('SAFE','safe'); lock_width(self.limits,'FAULT',18); self.mode=lbl('--'); lock_width(self.mode,'Disconnected',10); self.target=lbl('--.-- / --.--'); lock_width(self.target,'359.99 / 090.00',12); self.az_comp=lbl('AZ comp --','muted'); lock_width(self.az_comp,'AZ comp +9.99',10)
+        self.az_rate=lbl('AZ rate --.-- deg/s','muted'); self.el_rate=lbl('EL rate --.-- deg/s','muted'); lock_width(self.az_rate,'AZ rate 999.99 deg/s',10); lock_width(self.el_rate,'EL rate 999.99 deg/s',10)
         g.addWidget(title,0,0,1,2); g.addWidget(self.state,0,8,1,2,Qt.AlignRight)
         g.addWidget(lbl('AZ','muted'),1,0); g.addWidget(self.az,1,1); g.addWidget(lbl('AZ err','muted'),1,3); g.addWidget(self.az_err,1,4); g.addWidget(lbl('Limits','muted'),1,5); g.addWidget(self.limits,1,6)
         g.addWidget(lbl('EL','muted'),2,0); g.addWidget(self.el,2,1); g.addWidget(lbl('EL err','muted'),2,3); g.addWidget(self.el_err,2,4); g.addWidget(lbl('Mode','muted'),2,5); g.addWidget(self.mode,2,6)
-        g.addWidget(lbl('Target','muted'),3,3); g.addWidget(self.target,3,4); g.addWidget(self.az_comp,3,5,1,2)
+        g.addWidget(self.az_rate,3,0,1,2); g.addWidget(lbl('Target','muted'),3,3); g.addWidget(self.target,3,4); g.addWidget(self.az_comp,3,5,1,2)
+        g.addWidget(self.el_rate,4,0,1,2)
         c=QWidget(); c.setObjectName('manualPad'); cg=QGridLayout(c); cg.setContentsMargins(0,0,0,0); cg.setHorizontalSpacing(6); cg.setVerticalSpacing(6)
         for text,direction,row,col in [('EL+',Direction.EL_UP.value,0,1),('AZ-',Direction.AZ_CCW.value,1,0),('AZ+',Direction.AZ_CW.value,1,2),('EL-',Direction.EL_DOWN.value,2,1)]:
             b=btn(text); b.setFixedSize(64,30); b.pressed.connect(lambda d=direction: self.jog_pressed.emit(self.name,d)); b.released.connect(lambda: self.jog_released.emit(self.name)); cg.addWidget(b,row,col)
         stop=btn('STOP'); stop.setFixedSize(64,30); stop.clicked.connect(lambda: self.stop_clicked.emit(self.name)); cg.addWidget(stop,1,1)
-        g.addWidget(c,1,7,3,3,Qt.AlignLeft|Qt.AlignVCenter)
+        g.addWidget(c,1,7,4,3,Qt.AlignLeft|Qt.AlignVCenter)
         g.setColumnMinimumWidth(1,self.az.maximumWidth()); g.setColumnMinimumWidth(2,18); g.setColumnMinimumWidth(4,self.az_err.maximumWidth()); g.setColumnMinimumWidth(6,self.limits.maximumWidth())
         g.setColumnMinimumWidth(7,6); g.setColumnStretch(10,1)
     def set_position(self,pos: Optional[Position]):
         self.az.setText('--.--' if pos is None else f'{pos.azimuth:06.2f}'); self.el.setText('--.--' if pos is None else f'{pos.elevation:05.2f}')
+    def set_rates(self,az_rate: Optional[float], el_rate: Optional[float]):
+        self.az_rate.setText('AZ rate --.-- deg/s' if az_rate is None else f'AZ rate {az_rate:0.2f} deg/s')
+        self.el_rate.setText('EL rate --.-- deg/s' if el_rate is None else f'EL rate {el_rate:0.2f} deg/s')
     def set_target(self,target: Optional[TargetPosition], pos: Optional[Position], az_comp: Optional[float] = None):
         if not target:
             self.target.setText('--.-- / --.--'); self.az_err.setText('--.--'); self.el_err.setText('--.--'); self.az_comp.setText('AZ comp --'); return
@@ -70,6 +75,8 @@ class AntennaCard(Panel):
     def set_state(self,text):
         self.state.setText(text.upper()); low=text.lower(); name='stateFault' if any(x in low for x in ['fault','timeout']) else ('stateBusy' if any(x in low for x in ['slew','park','scan','yfactor','manual','connecting']) else ('stateGood' if 'tracking' in low else 'stateStopped'))
         self.state.setObjectName(name); self.state.style().unpolish(self.state); self.state.style().polish(self.state); self.mode.setText('Auto' if text.upper() in ['TRACKING','SLEWING','PARKING'] else text.title())
+        if text.upper() not in ['TRACKING','SLEWING','PARKING','SCAN','YFACTOR','MANUAL']:
+            self.set_rates(None,None)
     def set_limits_ok(self,ok):
         self.limits.setText('SAFE' if ok else 'FAULT'); self.limits.setObjectName('safe' if ok else 'faultTag'); self.limits.style().unpolish(self.limits); self.limits.style().polish(self.limits)
 class B210Panel(Panel):
@@ -573,7 +580,7 @@ PowerMeterPanel = B210Panel
 class WT7App(QWidget):
     def __init__(self,config_path):
         super().__init__(); self.config_path=Path(config_path); self.configs=load_configs(self.config_path); self.site=load_site_config(self.config_path); self.power_config=load_power_config(self.config_path); self.sources=load_sources(self.config_path); self.selected_source_name=self.site.selected_source if self.site.selected_source in self.sources else next(iter(self.sources), '')
-        self.event_log=EventLogger(Path('logs'),self.site.log_retention_days,self.site.log_level); self.state_store=AppStateStore(); self.sessions={}; self.positions={}; self.cards={}; self.current_target=None; self.card_targets={}; self.tracking_kind=''; self.tracking_stop=threading.Event(); self.jog_stops={}; self.b210_stop=threading.Event(); self.b210_thread=None; self.events=queue.Queue(); self.log_handle=None; self.log_writer=None; self.scan_stop=threading.Event(); self.scan_thread=None; self.scan_antenna_name=''; self.scan_axis=None; self.scan_offset_degrees=0.0; self.scan_offset_lock=threading.Lock(); self.scan_result_dialogs=[]; self.yfactor_stop=threading.Event(); self.yfactor_thread=None; self.yfactor_hot_label=''; self.peak_stop=threading.Event(); self.peak_thread=None; self.tracking_nominal_az={}; self.tracking_az_comp_force={}; self.modeless_dialogs=[]; self.active_scan_antenna=''; self.active_scan_dialog=None; self.scan_resume_kind=''; self.last_user_activity=time.monotonic(); self.timeout_in_progress=False
+        self.event_log=EventLogger(Path('logs'),self.site.log_retention_days,self.site.log_level); self.state_store=AppStateStore(); self.sessions={}; self.positions={}; self.position_rate_state={}; self.cards={}; self.current_target=None; self.card_targets={}; self.tracking_kind=''; self.tracking_stop=threading.Event(); self.jog_stops={}; self.b210_stop=threading.Event(); self.b210_thread=None; self.events=queue.Queue(); self.log_handle=None; self.log_writer=None; self.scan_stop=threading.Event(); self.scan_thread=None; self.scan_antenna_name=''; self.scan_axis=None; self.scan_offset_degrees=0.0; self.scan_offset_lock=threading.Lock(); self.scan_result_dialogs=[]; self.yfactor_stop=threading.Event(); self.yfactor_thread=None; self.yfactor_hot_label=''; self.peak_stop=threading.Event(); self.peak_thread=None; self.tracking_nominal_az={}; self.tracking_az_comp_force={}; self.modeless_dialogs=[]; self.active_scan_antenna=''; self.active_scan_dialog=None; self.scan_resume_kind=''; self.last_user_activity=time.monotonic(); self.timeout_in_progress=False
         self.setWindowTitle(f'WT7 ANTENNA CONTROLLER {APP_VERSION}'); self.resize(1120,780); self.setMinimumSize(1080,720); self.build_ui(); self.style_ui(); self.set_status('Load config, connect antennas, then use guarded jogs.'); self.event_log.info('APP_START',version=APP_VERSION,config=str(config_path))
         QApplication.instance().installEventFilter(self)
         self.t_ref=QTimer(self); self.t_ref.timeout.connect(self.update_reference); self.t_ref.start(1000); self.t_evt=QTimer(self); self.t_evt.timeout.connect(self.process_events); self.t_evt.start(100); self.t_pos=QTimer(self); self.t_pos.timeout.connect(self.poll_positions); self.t_pos.start(1000)
@@ -700,21 +707,22 @@ class WT7App(QWidget):
                 self.emit(lambda name:self.finish_disconnect(name),n)
         self.run_thread(worker,'Disconnect')
     def finish_disconnect(self,name):
-        self.positions.pop(name,None); self.tracking_nominal_az.pop(name,None); self.tracking_az_comp_force.pop(name,None); self.cards[name].set_position(None); self.cards[name].set_target(None,None); self.cards[name].set_state('DISCONNECTED'); self.set_status(f'{name} disconnected.')
+        self.positions.pop(name,None); self.position_rate_state.pop(name,None); self.tracking_nominal_az.pop(name,None); self.tracking_az_comp_force.pop(name,None); self.cards[name].set_position(None); self.cards[name].set_target(None,None); self.cards[name].set_state('DISCONNECTED'); self.set_status(f'{name} disconnected.')
         if not self.sessions:
             self.timeout_in_progress=False
     def stop_tracking(self):
         self.tracking_stop.set(); self.tracking_nominal_az.clear(); self.tracking_az_comp_force.clear()
         for n in self.sessions:
-            if n in self.cards: self.cards[n].set_state('STOPPED')
+            if n in self.cards: self.position_rate_state.pop(n,None); self.cards[n].set_state('STOPPED')
         self.set_status('Tracking stopped.')
     def stop_all(self):
         self.tracking_stop.set(); self.tracking_nominal_az.clear(); self.tracking_az_comp_force.clear(); [ev.set() for ev in self.jog_stops.values()]
-        for n,s in list(self.sessions.items()): self.run_thread(lambda s=s:s.stop_all(),f'Stop{n}'); self.cards[n].set_state('STOPPED')
+        for n,s in list(self.sessions.items()): self.run_thread(lambda s=s:s.stop_all(),f'Stop{n}'); self.position_rate_state.pop(n,None); self.cards[n].set_state('STOPPED')
         self.set_status('Stopped.')
     def stop_antenna(self,name):
         self.stop_jog(name); s=self.sessions.get(name)
         if s: self.run_thread(lambda:s.stop_all(),f'Stop{name}')
+        self.position_rate_state.pop(name,None)
         self.cards[name].set_state('STOPPED')
     def start_jog(self,name,direction_text):
         s=self.sessions.get(name)
@@ -932,7 +940,24 @@ class WT7App(QWidget):
                 except Exception as e: self.emit(lambda data:self.mark_fault(*data),(n,str(e)))
         self.run_thread(worker,'Poll')
     def update_position(self,name,pos):
-        self.positions[name]=pos; c=self.cards[name]; c.set_position(pos); card_target,az_comp=self.antenna_display_target(name,self.current_target); c.set_target(card_target,pos,az_comp); cfg=self.configs[name]; c.set_limits_ok(cfg.limits.is_az_allowed(pos.azimuth) and cfg.limits.is_el_allowed(pos.elevation))
+        self.update_position_rates(name,pos); self.positions[name]=pos; c=self.cards[name]; c.set_position(pos); card_target,az_comp=self.antenna_display_target(name,self.current_target); c.set_target(card_target,pos,az_comp); cfg=self.configs[name]; c.set_limits_ok(cfg.limits.is_az_allowed(pos.azimuth) and cfg.limits.is_el_allowed(pos.elevation))
+    def antenna_rate_active(self,name):
+        card=self.cards.get(name)
+        if not card: return False
+        return card.state.text() in ('TRACKING','SLEWING','PARKING','SCAN','YFACTOR','MANUAL')
+    def update_position_rates(self,name,pos):
+        now=time.monotonic(); previous=self.position_rate_state.get(name)
+        self.position_rate_state[name]=(pos,now)
+        card=self.cards.get(name)
+        if not card: return
+        if not self.antenna_rate_active(name):
+            card.set_rates(None,None); return
+        if not previous:
+            card.set_rates(0.0,0.0); return
+        prev_pos,prev_time=previous; dt=max(0.001,now-prev_time)
+        az_rate=abs(shortest_angle_delta(prev_pos.azimuth,pos.azimuth))/dt
+        el_rate=abs(pos.elevation-prev_pos.elevation)/dt
+        card.set_rates(az_rate,el_rate)
     def mark_fault(self,name,error):
         self.cards[name].set_state('FAULT'); self.set_status(f'{name}: {error}'); self.event_log.error('ANTENNA_FAULT',antenna=name,error=error)
     def is_slew_timeout_error(self,error):

@@ -1,5 +1,6 @@
 import os
 import tempfile
+import time
 from datetime import datetime, timezone
 import unittest
 from pathlib import Path
@@ -9,7 +10,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PyQt5.QtWidgets import QApplication
 
-from wt7_antenna import Axis
+from wt7_antenna import Axis, Position
 from wt7_astro import TargetPosition
 from wt7_config import ScanConfig
 from wt7_b210_power import B210PowerReading
@@ -158,6 +159,36 @@ dec_degrees = -80.0
 
         self.assertEqual(app.cards["East"].az_comp.text(), "AZ comp --")
         self.assertEqual(app.cards["East"].az_comp.objectName(), "muted")
+
+    def test_rate_fields_start_visible_with_muted_style(self):
+        app = self.make_app()
+
+        self.assertEqual(app.cards["East"].az_rate.text(), "AZ rate --.-- deg/s")
+        self.assertEqual(app.cards["East"].el_rate.text(), "EL rate --.-- deg/s")
+        self.assertEqual(app.cards["East"].az_rate.objectName(), "muted")
+        self.assertEqual(app.cards["East"].el_rate.objectName(), "muted")
+
+    def test_position_update_populates_rates_when_drive_active(self):
+        app = self.make_app()
+        app.sessions = {"East": _FakeSession()}
+        app.positions = {"East": Position(0.0, 0.0, 10.0, 20.0)}
+        app.cards["East"].set_state("SLEWING")
+        app.position_rate_state["East"] = (Position(0.0, 0.0, 10.0, 20.0), time.monotonic() - 2.0)
+
+        app.update_position("East", Position(0.0, 0.0, 20.0, 24.0))
+
+        self.assertIn("AZ rate 5.", app.cards["East"].az_rate.text())
+        self.assertIn("EL rate 2.", app.cards["East"].el_rate.text())
+
+    def test_position_update_clears_rates_when_drive_inactive(self):
+        app = self.make_app()
+        app.sessions = {"East": _FakeSession()}
+        app.cards["East"].set_state("STOPPED")
+
+        app.update_position("East", Position(0.0, 0.0, 20.0, 24.0))
+
+        self.assertEqual(app.cards["East"].az_rate.text(), "AZ rate --.-- deg/s")
+        self.assertEqual(app.cards["East"].el_rate.text(), "EL rate --.-- deg/s")
 
     def test_tracking_state_uses_compensated_drive_target(self):
         app = self.make_app()
