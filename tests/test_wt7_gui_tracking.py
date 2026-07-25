@@ -168,6 +168,19 @@ dec_degrees = -80.0
         self.assertEqual(app.cards["East"].az_rate.objectName(), "muted")
         self.assertEqual(app.cards["East"].el_rate.objectName(), "muted")
 
+    def test_recent_events_keeps_scrollable_session_history(self):
+        app = self.make_app()
+
+        app.set_status("First event.")
+        app.set_status("Second event.")
+        app.set_status("Third event.")
+
+        text = app.event_view.toPlainText()
+        self.assertIn("First event.", text)
+        self.assertIn("Second event.", text)
+        self.assertIn("Third event.", text)
+        self.assertEqual(app.event_history[-1].split("  ", 1)[1], "Third event.")
+
     def test_position_update_populates_rates_when_drive_active(self):
         app = self.make_app()
         app.sessions = {"East": _FakeSession()}
@@ -377,7 +390,7 @@ dec_degrees = -80.0
         app.mark_motion_exception("East", "Slew timed out after 360.0s")
 
         self.assertEqual(app.cards["East"].state.text(), "SLEW TIMEOUT")
-        self.assertIn("slew timeout", app.ev1.text().lower())
+        self.assertIn("slew timeout", app.event_view.toPlainText().lower())
 
     def test_non_timeout_motion_error_remains_fault(self):
         app = self.make_app()
