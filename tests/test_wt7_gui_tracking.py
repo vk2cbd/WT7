@@ -394,6 +394,52 @@ dec_degrees = -80.0
         self.assertEqual(slews[0][0:2], (30.0, 40.0))
         self.assertEqual(result["power_unit"], "dBFS")
 
+    def test_yfactor_dwell_refreshes_displayed_cold_target(self):
+        app = self.make_app()
+        app.site.track_interval_seconds = 0.1
+        targets = [
+            TargetPosition("Cold Sky", 94.75, 80.0),
+            TargetPosition("Cold Sky", 94.50, 80.0),
+        ]
+
+        class _YFactorSession(_FakeSession):
+            def __init__(self):
+                super().__init__()
+                self.config.az_track_speed = 100
+                self.config.el_track_speed = 100
+
+            def guarded_slew_to(self, azimuth, elevation, *args, **kwargs):
+                pass
+
+            def read_position(self):
+                return Position(0.0, 0.0, targets[-1].azimuth, targets[-1].elevation)
+
+        app.power.current_power_measurement = lambda antenna: {
+            "power_value": -30.0,
+            "power_dbfs": -30.0,
+            "power_unit": "dBFS",
+            "power_channel": "A",
+        }
+        app.card_targets["East"] = TargetPosition("Cold Sky", 94.98, 80.0)
+        call_count = {"n": 0}
+
+        def target_func():
+            call_count["n"] += 1
+            return targets[min(call_count["n"] - 1, len(targets) - 1)]
+
+        app.collect_yfactor_power(
+            "East",
+            0.45,
+            _YFactorSession(),
+            target_func,
+            hot_target_func=lambda: TargetPosition("Moon", 94.50, 50.0),
+            card_target=app.card_targets["East"],
+        )
+        app.process_events()
+
+        self.assertAlmostEqual(app.card_targets["East"].azimuth, 94.50)
+        self.assertEqual(app.card_targets["East"].elevation, 80.0)
+
     def test_yfactor_dialog_opens_modeless(self):
         app = self.make_app()
 

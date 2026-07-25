@@ -16,7 +16,7 @@ from wt7_config import B210Calibration, B210_CAL_LEVELS_DBM, PowerConfig, ScanCo
 from wt7_logging import EventLogger
 from wt7_solar import sun_equatorial, sun_position
 from wt7_state import AppStateStore, SystemRunState
-APP_VERSION = "v0.24"
+APP_VERSION = "v0.25"
 
 def hms(seconds: float) -> str:
     seconds %= 86400.0; h=int(seconds//3600); m=int((seconds%3600)//60); s=int(seconds%60); return f"{h:02d}:{m:02d}:{s:02d}"
@@ -1231,7 +1231,8 @@ class WT7App(QWidget):
         while time.monotonic()<end and not self.yfactor_stop.is_set():
             if session and target_func and time.monotonic()>=next_correction:
                 target=target_func(); hot_target=hot_target_func() if hot_target_func else None
-                self.refresh_yfactor_dwell_tracking(antenna,session,target,hot_target,card_target,target_func)
+                display_target=target if card_target is not None else None
+                self.refresh_yfactor_dwell_tracking(antenna,session,target,hot_target,display_target,target_func)
                 next_correction=time.monotonic()+self.yfactor_dwell_correction_interval(dwell)
                 if self.yfactor_stop.is_set(): break
             m=self.power.current_power_measurement(antenna)
