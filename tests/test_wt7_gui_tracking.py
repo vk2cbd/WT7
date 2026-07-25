@@ -153,6 +153,12 @@ dec_degrees = -80.0
         self.assertEqual(app.cards["East"].target.text(), "030.00 / 45.00")
         self.assertEqual(app.cards["East"].az_comp.text(), "AZ comp none")
 
+    def test_az_comp_field_starts_blank_with_muted_style(self):
+        app = self.make_app()
+
+        self.assertEqual(app.cards["East"].az_comp.text(), "")
+        self.assertEqual(app.cards["East"].az_comp.objectName(), "muted")
+
     def test_tracking_state_uses_compensated_drive_target(self):
         app = self.make_app()
         session = _FakeSession()
