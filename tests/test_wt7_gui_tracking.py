@@ -456,12 +456,16 @@ dec_degrees = -80.0
         app.start_tracking = lambda kind: calls.append(kind)
         app.card_targets["East"] = TargetPosition("Cold Sky", 10.0, 80.0)
         app.yfactor_stop.set()
+        app.yfactor_active = True
+        app.yfactor_thread = object()
         app.yfactor_hot_label = "Moon"
         app.cards["East"].set_state("YFACTOR")
 
         app.finish_yfactor_state("East", "moon", True)
 
         self.assertEqual(calls, ["moon"])
+        self.assertFalse(app.yfactor_active)
+        self.assertIsNone(app.yfactor_thread)
         self.assertFalse(app.yfactor_stop.is_set())
         self.assertEqual(app.yfactor_hot_label, "")
         self.assertNotIn("East", app.card_targets)
@@ -476,6 +480,46 @@ dec_degrees = -80.0
 
         self.assertEqual(calls, [])
         self.assertEqual(app.cards["East"].state.text(), "STOPPED")
+
+    def test_stale_yfactor_thread_does_not_block_new_measurement(self):
+        app = self.make_app()
+
+        class _Dialog:
+            def __init__(self):
+                self.status = ""
+
+            def set_status(self, text):
+                self.status = text
+
+        class _Thread:
+            def is_alive(self):
+                return True
+
+        dialog = _Dialog()
+        app.yfactor_active = False
+        app.yfactor_thread = _Thread()
+
+        app.start_yfactor(dialog, "East", "Moon", "Moon AZ / EL 80", 50.0, 80.0, 0.0, 0.0, 2, 40.0, True)
+
+        self.assertNotEqual(dialog.status, "Y Factor already running.")
+        self.assertIn("Connect", dialog.status)
+
+    def test_active_yfactor_blocks_new_measurement(self):
+        app = self.make_app()
+
+        class _Dialog:
+            def __init__(self):
+                self.status = ""
+
+            def set_status(self, text):
+                self.status = text
+
+        dialog = _Dialog()
+        app.yfactor_active = True
+
+        app.start_yfactor(dialog, "East", "Moon", "Moon AZ / EL 80", 50.0, 80.0, 0.0, 0.0, 2, 40.0, True)
+
+        self.assertEqual(dialog.status, "Y Factor already running.")
 
     def test_reference_update_uses_same_sun_target_for_source_pane(self):
         app = self.make_app()

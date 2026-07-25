@@ -16,7 +16,7 @@ from wt7_config import B210Calibration, B210_CAL_LEVELS_DBM, PowerConfig, ScanCo
 from wt7_logging import EventLogger
 from wt7_solar import sun_equatorial, sun_position
 from wt7_state import AppStateStore, SystemRunState
-APP_VERSION = "v0.25"
+APP_VERSION = "v0.26"
 
 def hms(seconds: float) -> str:
     seconds %= 86400.0; h=int(seconds//3600); m=int((seconds%3600)//60); s=int(seconds%60); return f"{h:02d}:{m:02d}:{s:02d}"
@@ -581,7 +581,7 @@ PowerMeterPanel = B210Panel
 class WT7App(QWidget):
     def __init__(self,config_path):
         super().__init__(); self.config_path=Path(config_path); self.configs=load_configs(self.config_path); self.site=load_site_config(self.config_path); self.power_config=load_power_config(self.config_path); self.sources=load_sources(self.config_path); self.selected_source_name=self.site.selected_source if self.site.selected_source in self.sources else next(iter(self.sources), '')
-        self.event_log=EventLogger(Path('logs'),self.site.log_retention_days,self.site.log_level); self.state_store=AppStateStore(); self.sessions={}; self.positions={}; self.position_rate_state={}; self.cards={}; self.current_target=None; self.card_targets={}; self.tracking_kind=''; self.tracking_stop=threading.Event(); self.jog_stops={}; self.b210_stop=threading.Event(); self.b210_thread=None; self.events=queue.Queue(); self.event_history=[]; self.log_handle=None; self.log_writer=None; self.scan_stop=threading.Event(); self.scan_thread=None; self.scan_antenna_name=''; self.scan_axis=None; self.scan_offset_degrees=0.0; self.scan_offset_lock=threading.Lock(); self.scan_result_dialogs=[]; self.yfactor_stop=threading.Event(); self.yfactor_thread=None; self.yfactor_hot_label=''; self.peak_stop=threading.Event(); self.peak_thread=None; self.tracking_nominal_az={}; self.tracking_az_comp_force={}; self.modeless_dialogs=[]; self.active_scan_antenna=''; self.active_scan_dialog=None; self.scan_resume_kind=''; self.last_user_activity=time.monotonic(); self.timeout_in_progress=False
+        self.event_log=EventLogger(Path('logs'),self.site.log_retention_days,self.site.log_level); self.state_store=AppStateStore(); self.sessions={}; self.positions={}; self.position_rate_state={}; self.cards={}; self.current_target=None; self.card_targets={}; self.tracking_kind=''; self.tracking_stop=threading.Event(); self.jog_stops={}; self.b210_stop=threading.Event(); self.b210_thread=None; self.events=queue.Queue(); self.event_history=[]; self.log_handle=None; self.log_writer=None; self.scan_stop=threading.Event(); self.scan_thread=None; self.scan_antenna_name=''; self.scan_axis=None; self.scan_offset_degrees=0.0; self.scan_offset_lock=threading.Lock(); self.scan_result_dialogs=[]; self.yfactor_stop=threading.Event(); self.yfactor_thread=None; self.yfactor_active=False; self.yfactor_hot_label=''; self.peak_stop=threading.Event(); self.peak_thread=None; self.tracking_nominal_az={}; self.tracking_az_comp_force={}; self.modeless_dialogs=[]; self.active_scan_antenna=''; self.active_scan_dialog=None; self.scan_resume_kind=''; self.last_user_activity=time.monotonic(); self.timeout_in_progress=False
         self.setWindowTitle(f'WT7 ANTENNA CONTROLLER {APP_VERSION}'); self.resize(1120,780); self.setMinimumSize(1080,720); self.build_ui(); self.style_ui(); self.set_status('Load config, connect antennas, then use guarded jogs.'); self.event_log.info('APP_START',version=APP_VERSION,config=str(config_path))
         QApplication.instance().installEventFilter(self)
         self.t_ref=QTimer(self); self.t_ref.timeout.connect(self.update_reference); self.t_ref.start(1000); self.t_evt=QTimer(self); self.t_evt.timeout.connect(self.process_events); self.t_evt.start(100); self.t_pos=QTimer(self); self.t_pos.timeout.connect(self.poll_positions); self.t_pos.start(1000)
@@ -1182,18 +1182,18 @@ class WT7App(QWidget):
             self.emit(lambda s:dialog.set_status(s),f'Measurement {phase}: settling antenna, AZ err {az_err:+0.2f} EL err {el_err:+0.2f}.')
         raise RuntimeError(f'Y Factor {phase} did not settle within tolerance; AZ err {last.get("az_error",0.0):+0.2f} EL err {last.get("el_error",0.0):+0.2f}.')
     def start_yfactor(self,dialog,antenna,label,cold_mode,cold_az,cold_el,cold_ra,cold_dec,count,dwell,alternate):
-        if self.yfactor_thread and self.yfactor_thread.is_alive(): dialog.set_status('Y Factor already running.'); return
+        if self.yfactor_active: dialog.set_status('Y Factor already running.'); return
         if antenna not in self.sessions: dialog.set_status('Connect and select an antenna before Y Factor measurement.'); return
         if self.power.current_power_measurement(antenna) is None: dialog.set_status(f"Start B210 power and wait for CH {self.power.power_channel_for_antenna(antenna)} readings before Y Factor measurement."); return
         self.tracking_stop.set(); self.tracking_kind=''; self.tracking_nominal_az.clear(); self.tracking_az_comp_force.clear(); self.yfactor_hot_label=label; self.apply_target(self.yfactor_hot_target(label))
-        self.yfactor_stop.clear(); dialog.set_status(f'Y Factor starting on {antenna}.'); self.set_status(f'Y Factor starting on {antenna}.')
+        self.yfactor_active=True; self.yfactor_stop.clear(); dialog.set_status(f'Y Factor starting on {antenna}.'); self.set_status(f'Y Factor starting on {antenna}.')
         self.cards[antenna].set_state('YFACTOR')
         self.yfactor_thread=threading.Thread(target=lambda:self.yfactor_worker(dialog,antenna,label,cold_mode,cold_az,cold_el,cold_ra,cold_dec,count,dwell,alternate),daemon=True); self.yfactor_thread.start()
     def stop_yfactor(self): self.yfactor_stop.set(); self.set_status('Y Factor stop requested.')
     def yfactor_resume_kind(self,label):
         return {'Sun':'sun','Moon':'moon','Source':'source'}.get(label,'')
     def finish_yfactor_state(self,antenna,resume_kind,should_resume):
-        self.yfactor_stop.clear(); self.yfactor_hot_label=''
+        self.yfactor_active=False; self.yfactor_thread=None; self.yfactor_stop.clear(); self.yfactor_hot_label=''
         self.set_antenna_target(antenna,None)
         if should_resume and resume_kind:
             self.start_tracking(resume_kind)
