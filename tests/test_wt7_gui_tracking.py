@@ -281,6 +281,30 @@ dec_degrees = -80.0
 
         self.assertEqual(app.cards["East"].state.text(), "STOPPED")
 
+    def test_tracking_fault_cleanup_preserves_slew_timeout(self):
+        app = self.make_app()
+        app.sessions = {"East": _FakeSession()}
+        app.cards["East"].set_state("SLEW TIMEOUT")
+
+        app.finish_tracking_fault_states()
+
+        self.assertEqual(app.cards["East"].state.text(), "SLEW TIMEOUT")
+
+    def test_slew_timeout_error_gets_specific_state(self):
+        app = self.make_app()
+
+        app.mark_motion_exception("East", "Slew timed out after 360.0s")
+
+        self.assertEqual(app.cards["East"].state.text(), "SLEW TIMEOUT")
+        self.assertIn("slew timeout", app.ev1.text().lower())
+
+    def test_non_timeout_motion_error_remains_fault(self):
+        app = self.make_app()
+
+        app.mark_motion_exception("East", "azimuth no progress")
+
+        self.assertEqual(app.cards["East"].state.text(), "FAULT")
+
 
 
 if __name__ == "__main__":

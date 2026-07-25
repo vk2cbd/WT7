@@ -16,7 +16,7 @@ from wt7_config import B210Calibration, B210_CAL_LEVELS_DBM, PowerConfig, ScanCo
 from wt7_logging import EventLogger
 from wt7_solar import sun_equatorial, sun_position
 from wt7_state import AppStateStore, SystemRunState
-APP_VERSION = "v0.13"
+APP_VERSION = "v0.14"
 
 def hms(seconds: float) -> str:
     seconds %= 86400.0; h=int(seconds//3600); m=int((seconds%3600)//60); s=int(seconds%60); return f"{h:02d}:{m:02d}:{s:02d}"
@@ -67,7 +67,7 @@ class AntennaCard(Panel):
         self.az_comp.setText(f'AZ comp {az_comp:+0.2f}' if abs(az_comp) >= 0.005 else '')
         if pos: self.az_err.setText(f'{shortest_angle_delta(pos.azimuth,target.azimuth):+0.2f}'); self.el_err.setText(f'{target.elevation-pos.elevation:+0.2f}')
     def set_state(self,text):
-        self.state.setText(text.upper()); low=text.lower(); name='stateFault' if 'fault' in low else ('stateBusy' if any(x in low for x in ['slew','park','scan','yfactor','manual','connecting']) else ('stateGood' if 'tracking' in low else 'stateStopped'))
+        self.state.setText(text.upper()); low=text.lower(); name='stateFault' if any(x in low for x in ['fault','timeout']) else ('stateBusy' if any(x in low for x in ['slew','park','scan','yfactor','manual','connecting']) else ('stateGood' if 'tracking' in low else 'stateStopped'))
         self.state.setObjectName(name); self.state.style().unpolish(self.state); self.state.style().polish(self.state); self.mode.setText('Auto' if text.upper() in ['TRACKING','SLEWING','PARKING'] else text.title())
     def set_limits_ok(self,ok):
         self.limits.setText('SAFE' if ok else 'FAULT'); self.limits.setObjectName('safe' if ok else 'faultTag'); self.limits.style().unpolish(self.limits); self.limits.style().polish(self.limits)
@@ -790,10 +790,10 @@ class WT7App(QWidget):
                 self.tracking_kind=''; self.tracking_az_comp_force.clear(); stop.set()
                 for _name,_session in list(self.sessions.items()):
                     self.run_thread(lambda s=_session:s.stop_all(),f'TrackFaultStop{_name}')
-            self.emit(lambda data:self.mark_fault(*data),(name,str(e)))
+            self.emit(lambda data:self.mark_motion_exception(*data),(name,str(e)))
     def finish_tracking_fault_states(self):
         for name in self.sessions:
-            if name in self.cards and self.cards[name].state.text() != 'FAULT':
+            if name in self.cards and self.cards[name].state.text() not in ('FAULT','SLEW TIMEOUT'):
                 self.cards[name].set_state('STOPPED')
     def park_all(self):
         if not self.sessions: self.set_status('Connect antennas before parking.'); return
@@ -804,7 +804,7 @@ class WT7App(QWidget):
                 s.config.limits.assert_position_allowed(s.config.park_az,s.config.park_el)
                 s.guarded_slew_to(s.config.park_az,s.config.park_el,s.config.az_track_speed,s.config.el_track_speed,stop,self.az_tol(),self.el_tol(),self.site.az_stop_tolerance_degrees,self.site.el_stop_tolerance_degrees,self.site.az_slow_speed,self.site.el_slow_speed,self.site.az_slow_threshold_degrees,self.site.el_slow_threshold_degrees,lambda p,n=n:self.emit(lambda data:self.update_position(*data),(n,p)))
                 if not stop.is_set(): self.emit(lambda name:self.cards[name].set_state('PARKED'),n)
-            except Exception as e: self.emit(lambda data:self.mark_fault(*data),(n,str(e)))
+            except Exception as e: self.emit(lambda data:self.mark_motion_exception(*data),(n,str(e)))
         def worker():
             threads=[]
             for n,s in sessions:
@@ -824,7 +824,7 @@ class WT7App(QWidget):
                     self.emit(lambda data:self.cards[data[0]].set_state(data[1]),(n,display_state)); s.config.limits.assert_position_allowed(effective_target.azimuth,effective_target.elevation)
                     s.guarded_slew_to(effective_target.azimuth,effective_target.elevation,s.config.az_track_speed,s.config.el_track_speed,stop,self.az_tol(),self.el_tol(),self.site.az_stop_tolerance_degrees,self.site.el_stop_tolerance_degrees,self.site.az_slow_speed,self.site.el_slow_speed,self.site.az_slow_threshold_degrees,self.site.el_slow_threshold_degrees,lambda p,n=n:self.emit(lambda data:self.update_position(*data),(n,p)),apply_az_low_to_high_compensation=(activity!='SCAN'),force_az_low_to_high_compensation=force_comp)
                     if not stop.is_set(): self.emit(lambda data:self.cards[data[0]].set_state(data[1]),(n,state_activity))
-                except Exception as e: self.emit(lambda data:self.mark_fault(*data),(n,str(e)))
+                except Exception as e: self.emit(lambda data:self.mark_motion_exception(*data),(n,str(e)))
             t=threading.Thread(target=worker,daemon=True); threads.append(t); t.start()
         for t in threads: t.join()
     def az_lh_compensation_for_tracking(self,name,session,target,activity):
@@ -934,6 +934,14 @@ class WT7App(QWidget):
         self.positions[name]=pos; c=self.cards[name]; c.set_position(pos); card_target,az_comp=self.antenna_display_target(name,self.current_target); c.set_target(card_target,pos,az_comp); cfg=self.configs[name]; c.set_limits_ok(cfg.limits.is_az_allowed(pos.azimuth) and cfg.limits.is_el_allowed(pos.elevation))
     def mark_fault(self,name,error):
         self.cards[name].set_state('FAULT'); self.set_status(f'{name}: {error}'); self.event_log.error('ANTENNA_FAULT',antenna=name,error=error)
+    def is_slew_timeout_error(self,error):
+        text=str(error).lower()
+        return 'slew timed out' in text or 'axis slew timed out' in text
+    def mark_motion_exception(self,name,error):
+        if self.is_slew_timeout_error(error):
+            self.cards[name].set_state('SLEW TIMEOUT'); self.set_status(f'{name}: slew timeout. {error}'); self.event_log.warn('SLEW_TIMEOUT',antenna=name,error=error)
+        else:
+            self.mark_fault(name,error)
     def motion_event(self,event,payload): self.event_log.debug(event,payload=payload)
     def validate_scan_config(self,cfg):
         if cfg.antenna_name not in self.configs: raise RuntimeError('Select East or West antenna for the scan.')
