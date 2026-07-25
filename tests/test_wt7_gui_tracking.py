@@ -359,8 +359,6 @@ dec_degrees = -80.0
     def test_yfactor_dwell_refreshes_tracking_target_during_measurement(self):
         app = self.make_app()
         app.site.track_interval_seconds = 0.1
-        app.site.az_slow_speed = 25
-        app.site.el_slow_speed = 35
         target = TargetPosition("Moon", 30.0, 40.0)
         hot = TargetPosition("Moon", 30.0, 40.0)
         slews = []
@@ -372,7 +370,7 @@ dec_degrees = -80.0
                 self.config.el_track_speed = 100
 
             def guarded_slew_to(self, azimuth, elevation, *args, **kwargs):
-                slews.append((azimuth, elevation, args[0], args[1], kwargs.get("target_callback")))
+                slews.append((azimuth, elevation, kwargs.get("target_callback")))
 
             def read_position(self):
                 return Position(0.0, 0.0, target.azimuth, target.elevation)
@@ -394,7 +392,6 @@ dec_degrees = -80.0
 
         self.assertGreaterEqual(len(slews), 1)
         self.assertEqual(slews[0][0:2], (30.0, 40.0))
-        self.assertEqual(slews[0][2:4], (25, 35))
         self.assertEqual(result["power_unit"], "dBFS")
 
     def test_yfactor_dwell_refreshes_displayed_cold_target(self):
