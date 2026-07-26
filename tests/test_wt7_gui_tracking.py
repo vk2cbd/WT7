@@ -356,12 +356,12 @@ dec_degrees = -80.0
 
         self.assertNotIn("East", app.card_targets)
 
-    def test_yfactor_dwell_refreshes_tracking_target_during_measurement(self):
+    def test_yfactor_dwell_uses_quiet_hold_correction_during_measurement(self):
         app = self.make_app()
         app.site.track_interval_seconds = 0.1
         target = TargetPosition("Moon", 30.0, 40.0)
         hot = TargetPosition("Moon", 30.0, 40.0)
-        slews = []
+        axis_slews = []
 
         class _YFactorSession(_FakeSession):
             def __init__(self):
@@ -370,10 +370,13 @@ dec_degrees = -80.0
                 self.config.el_track_speed = 100
 
             def guarded_slew_to(self, azimuth, elevation, *args, **kwargs):
-                slews.append((azimuth, elevation, kwargs.get("target_callback")))
+                raise AssertionError("Y Factor dwell should not use full guarded_slew_to")
+
+            def guarded_slew_axis_to(self, axis, target_degrees, speed, stop_event, *args, **kwargs):
+                axis_slews.append((axis, target_degrees, speed))
 
             def read_position(self):
-                return Position(0.0, 0.0, target.azimuth, target.elevation)
+                return Position(0.0, 0.0, target.azimuth - 0.5, target.elevation - 0.4)
 
         app.power.current_power_measurement = lambda antenna: {
             "power_value": -30.0,
@@ -384,15 +387,44 @@ dec_degrees = -80.0
 
         result = app.collect_yfactor_power(
             "East",
-            0.25,
+            0.45,
             _YFactorSession(),
             lambda: target,
             hot_target_func=lambda: hot,
         )
 
-        self.assertGreaterEqual(len(slews), 1)
-        self.assertEqual(slews[0][0:2], (30.0, 40.0))
+        self.assertIn((Axis.AZIMUTH, 30.0, 100), axis_slews)
+        self.assertIn((Axis.ELEVATION, 40.0, 100), axis_slews)
         self.assertEqual(result["power_unit"], "dBFS")
+
+    def test_yfactor_dwell_does_not_correct_single_threshold_crossing(self):
+        app = self.make_app()
+        app.site.track_interval_seconds = 0.1
+        target = TargetPosition("Moon", 30.0, 40.0)
+        axis_slews = []
+
+        class _YFactorSession(_FakeSession):
+            def __init__(self):
+                super().__init__()
+                self.config.az_track_speed = 100
+                self.config.el_track_speed = 100
+
+            def guarded_slew_axis_to(self, axis, target_degrees, speed, stop_event, *args, **kwargs):
+                axis_slews.append((axis, target_degrees, speed))
+
+            def read_position(self):
+                return Position(0.0, 0.0, target.azimuth - 0.5, target.elevation)
+
+        app.power.current_power_measurement = lambda antenna: {
+            "power_value": -30.0,
+            "power_dbfs": -30.0,
+            "power_unit": "dBFS",
+            "power_channel": "A",
+        }
+
+        app.collect_yfactor_power("East", 0.18, _YFactorSession(), lambda: target)
+
+        self.assertEqual(axis_slews, [])
 
     def test_yfactor_dwell_refreshes_displayed_cold_target(self):
         app = self.make_app()

@@ -68,6 +68,12 @@ Things To Revisit:
 - Confirm that the non-selected antenna remains stopped, as intended, during the measurement.
 - Decouple the Y Factor dialog from the main window so it can be moved independently while the main app remains visible and usable.
 
+Field Test Note:
+
+- WT7 v0.27 changes Y Factor dwell from repeated full guarded slews to a quieter dwell-hold correction loop.
+- Expected practical dwell precision is about +/-0.10 to +/-0.20 degrees while reducing drive chatter during long hot/cold integrations.
+- This is an experimental, version-controlled change. If testing shows worse repeatability or pointing, roll back the v0.27 Y Factor dwell-hold commit.
+
 ## Manual Drive Controls
 
 Status: open
