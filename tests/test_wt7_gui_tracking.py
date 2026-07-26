@@ -93,6 +93,81 @@ dec_degrees = -80.0
 
         self.assertEqual(seen, [("sun", False)])
 
+    def test_repeated_same_tracking_request_does_not_restart_worker(self):
+        app = self.make_app()
+        calls = []
+
+        class AliveThread:
+            def is_alive(self):
+                return True
+
+        app.run_thread = lambda fn, name="": calls.append((fn, name)) or AliveThread()
+        app.sessions = {"East": _FakeSession()}
+        app.current_tracking_target = lambda kind: TargetPosition("Moon", 10.0, 20.0)
+
+        app.start_tracking("moon")
+        app.start_tracking("moon")
+
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(app.tracking_kind, "moon")
+        self.assertIn("Already tracking Moon.", app.event_history[0])
+
+    def test_new_tracking_request_waits_for_previous_loop_to_stop(self):
+        app = self.make_app()
+        calls = []
+
+        class StoppingThread:
+            def __init__(self):
+                self.alive = True
+                self.join_calls = []
+
+            def is_alive(self):
+                return self.alive
+
+            def join(self, timeout=None):
+                self.join_calls.append(timeout)
+                self.alive = False
+
+        old_thread = StoppingThread()
+        app.tracking_thread = old_thread
+        app.tracking_kind = "sun"
+        app.sessions = {"East": _FakeSession()}
+        app.current_tracking_target = lambda kind: TargetPosition(kind.title(), 10.0, 20.0)
+        app.run_thread = lambda fn, name="": calls.append((fn, name)) or SimpleNamespace(is_alive=lambda: False)
+
+        app.start_tracking("moon")
+
+        self.assertTrue(old_thread.join_calls)
+        self.assertEqual(app.tracking_kind, "moon")
+        self.assertEqual(len(calls), 1)
+
+    def test_new_tracking_request_defers_if_previous_loop_is_still_running(self):
+        app = self.make_app()
+        calls = []
+
+        class StuckThread:
+            def __init__(self):
+                self.join_calls = []
+
+            def is_alive(self):
+                return True
+
+            def join(self, timeout=None):
+                self.join_calls.append(timeout)
+
+        old_thread = StuckThread()
+        app.tracking_thread = old_thread
+        app.tracking_kind = "sun"
+        app.sessions = {"East": _FakeSession()}
+        app.current_tracking_target = lambda kind: TargetPosition(kind.title(), 10.0, 20.0)
+        app.run_thread = lambda fn, name="": calls.append((fn, name))
+
+        app.start_tracking("moon")
+
+        self.assertTrue(old_thread.join_calls)
+        self.assertEqual(calls, [])
+        self.assertEqual(app.tracking_kind, "")
+        self.assertIn("Previous tracking is still stopping", app.event_history[0])
 
     def test_scan_preload_uses_antenna_compensation(self):
         app = self.make_app()
