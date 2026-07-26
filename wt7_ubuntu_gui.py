@@ -16,7 +16,7 @@ from wt7_config import B210Calibration, B210_CAL_LEVELS_DBM, PowerConfig, ScanCo
 from wt7_logging import EventLogger
 from wt7_solar import sun_equatorial, sun_position
 from wt7_state import AppStateStore, SystemRunState
-APP_VERSION = "v0.28"
+APP_VERSION = "v0.29"
 
 def hms(seconds: float) -> str:
     seconds %= 86400.0; h=int(seconds//3600); m=int((seconds%3600)//60); s=int(seconds%60); return f"{h:02d}:{m:02d}:{s:02d}"
@@ -1188,26 +1188,9 @@ class WT7App(QWidget):
         if hot_target: self.emit(lambda t:self.apply_target(t),hot_target)
         self.emit(lambda data:self.set_antenna_target(*data),(antenna,card_target))
         target_callback=(lambda _p: (target_func().azimuth,target_func().elevation)) if target_func else None
-        session.guarded_slew_to(target.azimuth,target.elevation,session.config.az_track_speed,session.config.el_track_speed,self.yfactor_stop,self.az_tol(),self.el_tol(),self.site.az_stop_tolerance_degrees,self.site.el_stop_tolerance_degrees,self.site.az_slow_speed,self.site.el_slow_speed,self.site.az_slow_threshold_degrees,self.site.el_slow_threshold_degrees,lambda p:self.emit(lambda data:self.update_position(*data),(antenna,p)),target_callback=target_callback)
+        session.guarded_slew_to(target.azimuth,target.elevation,session.config.az_track_speed,session.config.el_track_speed,self.yfactor_stop,self.az_tol(),self.el_tol(),self.site.az_stop_tolerance_degrees,self.site.el_stop_tolerance_degrees,self.site.az_slow_speed,self.site.el_slow_speed,self.site.az_slow_threshold_degrees,self.site.el_slow_threshold_degrees,lambda p:self.emit(lambda data:self.update_position(*data),(antenna,p)),target_callback=target_callback,apply_az_low_to_high_compensation=False)
         pos=session.read_position(); self.emit(lambda data:self.update_position(*data),(antenna,pos))
         return target,pos
-    def yfactor_dwell_hold_correction(self,antenna,session,target,hot_target=None,card_target=None):
-        if hot_target: self.emit(lambda t:self.apply_target(t),hot_target)
-        self.emit(lambda data:self.set_antenna_target(*data),(antenna,card_target))
-        pos=session.read_position(); self.emit(lambda data:self.update_position(*data),(antenna,pos))
-        az_err,el_err=self.yfactor_position_error(session,pos,target)
-        az_hold_start=max(0.20,self.az_tol()*2.0)
-        el_hold_start=max(0.20,self.el_tol()*2.0)
-        corrected=False
-        if abs(az_err)>az_hold_start:
-            session.guarded_slew_axis_to(Axis.AZIMUTH,target.azimuth,session.config.az_track_speed,self.yfactor_stop,az_hold_start,self.az_tol(),self.site.az_slow_speed,self.site.az_slow_threshold_degrees,lambda p:self.emit(lambda data:self.update_position(*data),(antenna,p)))
-            corrected=True
-        if not self.yfactor_stop.is_set() and abs(el_err)>el_hold_start:
-            session.guarded_slew_axis_to(Axis.ELEVATION,target.elevation,session.config.el_track_speed,self.yfactor_stop,el_hold_start,self.el_tol(),self.site.el_slow_speed,self.site.el_slow_threshold_degrees,lambda p:self.emit(lambda data:self.update_position(*data),(antenna,p)))
-            corrected=True
-        if corrected:
-            pos=session.read_position(); self.emit(lambda data:self.update_position(*data),(antenna,pos))
-        return corrected
     def yfactor_slew_and_settle(self,session,antenna,phase,label,cold_mode,cold_az,cold_el,cold_ra,cold_dec,dialog):
         last={}
         for attempt in range(1,4):
@@ -1266,22 +1249,12 @@ class WT7App(QWidget):
             stopped=self.yfactor_stop.is_set()
             self.emit(lambda data:self.finish_yfactor_state(*data),(antenna,resume_kind,completed and not stopped))
     def collect_yfactor_power(self,antenna,dwell,session=None,target_func=None,start_meta=None,hot_target_func=None,card_target=None):
-        vals=[]; end=time.monotonic()+dwell; next_correction=time.monotonic()+self.yfactor_dwell_correction_interval(dwell); hold_exceed_count=0
+        vals=[]; end=time.monotonic()+dwell; next_correction=time.monotonic()+self.yfactor_dwell_correction_interval(dwell)
         while time.monotonic()<end and not self.yfactor_stop.is_set():
             if session and target_func and time.monotonic()>=next_correction:
                 target=target_func(); hot_target=hot_target_func() if hot_target_func else None
                 display_target=target if card_target is not None else None
-                pos=session.read_position(); self.emit(lambda data:self.update_position(*data),(antenna,pos))
-                if hot_target: self.emit(lambda t:self.apply_target(t),hot_target)
-                self.emit(lambda data:self.set_antenna_target(*data),(antenna,display_target))
-                az_err,el_err=self.yfactor_position_error(session,pos,target)
-                if abs(az_err)>max(0.20,self.az_tol()*2.0) or abs(el_err)>max(0.20,self.el_tol()*2.0):
-                    hold_exceed_count+=1
-                else:
-                    hold_exceed_count=0
-                if hold_exceed_count>=2:
-                    self.yfactor_dwell_hold_correction(antenna,session,target,hot_target,display_target)
-                    hold_exceed_count=0
+                self.refresh_yfactor_dwell_tracking(antenna,session,target,hot_target,display_target,target_func)
                 next_correction=time.monotonic()+self.yfactor_dwell_correction_interval(dwell)
                 if self.yfactor_stop.is_set(): break
             m=self.power.current_power_measurement(antenna)

@@ -431,12 +431,12 @@ dec_degrees = -80.0
 
         self.assertNotIn("East", app.card_targets)
 
-    def test_yfactor_dwell_uses_quiet_hold_correction_during_measurement(self):
+    def test_yfactor_dwell_uses_standard_tracking_correction_during_measurement(self):
         app = self.make_app()
         app.site.track_interval_seconds = 0.1
         target = TargetPosition("Moon", 30.0, 40.0)
         hot = TargetPosition("Moon", 30.0, 40.0)
-        axis_slews = []
+        slew_calls = []
 
         class _YFactorSession(_FakeSession):
             def __init__(self):
@@ -444,11 +444,8 @@ dec_degrees = -80.0
                 self.config.az_track_speed = 100
                 self.config.el_track_speed = 100
 
-            def guarded_slew_to(self, azimuth, elevation, *args, **kwargs):
-                raise AssertionError("Y Factor dwell should not use full guarded_slew_to")
-
-            def guarded_slew_axis_to(self, axis, target_degrees, speed, stop_event, *args, **kwargs):
-                axis_slews.append((axis, target_degrees, speed))
+            def guarded_slew_to(self, azimuth, elevation, az_speed, el_speed, stop_event, az_start, el_start, az_stop, el_stop, *args, **kwargs):
+                slew_calls.append((azimuth, elevation, az_speed, el_speed, az_start, el_start, az_stop, el_stop, kwargs.get("apply_az_low_to_high_compensation")))
 
             def read_position(self):
                 return Position(0.0, 0.0, target.azimuth - 0.5, target.elevation - 0.4)
@@ -468,15 +465,18 @@ dec_degrees = -80.0
             hot_target_func=lambda: hot,
         )
 
-        self.assertIn((Axis.AZIMUTH, 30.0, 100), axis_slews)
-        self.assertIn((Axis.ELEVATION, 40.0, 100), axis_slews)
+        self.assertTrue(slew_calls)
+        self.assertEqual(slew_calls[0][0:4], (30.0, 40.0, 100, 100))
+        self.assertEqual(slew_calls[0][4], app.az_tol())
+        self.assertEqual(slew_calls[0][5], app.el_tol())
+        self.assertFalse(slew_calls[0][8])
         self.assertEqual(result["power_unit"], "dBFS")
 
-    def test_yfactor_dwell_does_not_correct_single_threshold_crossing(self):
+    def test_yfactor_dwell_does_not_use_axis_only_hold_correction(self):
         app = self.make_app()
         app.site.track_interval_seconds = 0.1
         target = TargetPosition("Moon", 30.0, 40.0)
-        axis_slews = []
+        slew_calls = []
 
         class _YFactorSession(_FakeSession):
             def __init__(self):
@@ -484,8 +484,11 @@ dec_degrees = -80.0
                 self.config.az_track_speed = 100
                 self.config.el_track_speed = 100
 
+            def guarded_slew_to(self, azimuth, elevation, *args, **kwargs):
+                slew_calls.append((azimuth, elevation))
+
             def guarded_slew_axis_to(self, axis, target_degrees, speed, stop_event, *args, **kwargs):
-                axis_slews.append((axis, target_degrees, speed))
+                raise AssertionError("Y Factor dwell must not use axis-only hold correction")
 
             def read_position(self):
                 return Position(0.0, 0.0, target.azimuth - 0.5, target.elevation)
@@ -497,9 +500,9 @@ dec_degrees = -80.0
             "power_channel": "A",
         }
 
-        app.collect_yfactor_power("East", 0.18, _YFactorSession(), lambda: target)
+        app.collect_yfactor_power("East", 0.35, _YFactorSession(), lambda: target)
 
-        self.assertEqual(axis_slews, [])
+        self.assertTrue(slew_calls)
 
     def test_yfactor_dwell_refreshes_displayed_cold_target(self):
         app = self.make_app()
