@@ -16,7 +16,7 @@ from wt7_config import B210Calibration, B210_CAL_LEVELS_DBM, PowerConfig, ScanCo
 from wt7_logging import EventLogger
 from wt7_solar import sun_equatorial, sun_position
 from wt7_state import AppStateStore, SystemRunState
-APP_VERSION = "v0.29"
+APP_VERSION = "v0.30"
 
 def hms(seconds: float) -> str:
     seconds %= 86400.0; h=int(seconds//3600); m=int((seconds%3600)//60); s=int(seconds%60); return f"{h:02d}:{m:02d}:{s:02d}"
@@ -505,7 +505,7 @@ class YFactorSettingsDialog(SimpleDialog):
         super().__init__(app,'Y Factor'); g=QGridLayout(); self.main.addLayout(g); y=load_yfactor_config(app.config_path)
         self.hot=QComboBox(); self.hot.addItems(['Sun','Moon','Source']); self.hot.setCurrentText(y.hot_target)
         self.antenna=QComboBox(); self.antenna.addItems(list(app.configs.keys())); self.antenna.setCurrentText(y.antenna_name)
-        self.cold=QComboBox(); self.cold.addItems(['Sun AZ / EL 80','Moon AZ / EL 80','AZ/EL','RA/Dec']); self.cold.setCurrentText(y.cold_mode)
+        self.cold=QComboBox(); self.cold.addItems(['Sun AZ / EL 80','Moon AZ / EL 80','Source AZ / EL 80','AZ/EL','RA/Dec']); self.cold.setCurrentText(y.cold_mode)
         self.workflow=QComboBox(); self.workflow.addItems(['Alternate H/C','Repeat H/C']); self.workflow.setCurrentText('Alternate H/C' if y.alternate_order else 'Repeat H/C')
         self.fields={}; specs=[('cold_az','Cold AZ',y.cold_az),('cold_el','Cold EL',y.cold_el),('cold_ra','Cold RA h',y.cold_ra),('cold_dec','Cold Dec',y.cold_dec),('count','Measurements',y.count),('dwell_seconds','Dwell sec',y.dwell_seconds)]
         for r,(label,w) in enumerate([('Hot target',self.hot),('Antenna',self.antenna),('Cold sky',self.cold)]): g.addWidget(lbl(label),r,0); g.addWidget(w,r,1)
@@ -515,9 +515,10 @@ class YFactorSettingsDialog(SimpleDialog):
         row.addWidget(start); row.addWidget(stop); row.addStretch(1); row.addWidget(close); self.main.addLayout(row)
         self.hot.currentTextChanged.connect(self.on_hot_target_changed); self.on_hot_target_changed()
     def on_hot_target_changed(self):
-        if self.cold.currentText() not in ['Sun AZ / EL 80','Moon AZ / EL 80']: return
+        if self.cold.currentText() not in ['Sun AZ / EL 80','Moon AZ / EL 80','Source AZ / EL 80']: return
         if self.hot.currentText() == 'Sun': self.cold.setCurrentText('Sun AZ / EL 80')
         elif self.hot.currentText() == 'Moon': self.cold.setCurrentText('Moon AZ / EL 80')
+        elif self.hot.currentText() == 'Source': self.cold.setCurrentText('Source AZ / EL 80')
     def yfactor_config(self):
         return YFactorConfig(self.antenna.currentText(),self.hot.currentText(),self.cold.currentText(),self.to_float(self.fields['cold_az'],'Cold AZ'),self.to_float(self.fields['cold_el'],'Cold EL'),self.to_float(self.fields['cold_ra'],'Cold RA'),self.to_float(self.fields['cold_dec'],'Cold Dec'),self.to_int(self.fields['count'],'Measurements'),self.to_float(self.fields['dwell_seconds'],'Dwell'),self.workflow.currentText()=='Alternate H/C')
     def start_measurement(self):
@@ -1171,6 +1172,7 @@ class WT7App(QWidget):
     def yfactor_cold_target(self,mode,hot,az,el,ra,dec):
         if mode == 'Sun AZ / EL 80': s=self.target_for_kind('sun'); return TargetPosition('Cold Sky',s.azimuth,80.0)
         if mode == 'Moon AZ / EL 80': m=self.target_for_kind('moon'); return TargetPosition('Cold Sky',m.azimuth,80.0)
+        if mode == 'Source AZ / EL 80': return TargetPosition('Cold Sky',hot.azimuth,80.0)
         if mode in ('AZ/EL','AZ / EL'): return TargetPosition('Cold Sky',az,el)
         return source_position('Cold Sky',ra,dec,self.site.latitude,self.site.longitude)
     def yfactor_phase_target(self,phase,label,cold_mode,cold_az,cold_el,cold_ra,cold_dec):

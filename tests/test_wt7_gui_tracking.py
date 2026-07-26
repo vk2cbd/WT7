@@ -414,6 +414,16 @@ dec_degrees = -80.0
         self.assertAlmostEqual(az_error, -0.2)
         self.assertAlmostEqual(el_error, 0.1)
 
+    def test_yfactor_source_az_el80_cold_target_uses_hot_source_azimuth(self):
+        app = self.make_app()
+        app.yfactor_hot_target = lambda label: TargetPosition("Source", 123.4, 22.0)
+
+        cold = app.yfactor_phase_target("cold", "Source", "Source AZ / EL 80", 50.0, 60.0, 0.0, 0.0)
+
+        self.assertEqual(cold.name, "Cold Sky")
+        self.assertAlmostEqual(cold.azimuth, 123.4)
+        self.assertAlmostEqual(cold.elevation, 80.0)
+
     def test_card_target_override_does_not_change_source_pane(self):
         app = self.make_app()
         hot = TargetPosition("Sun", 10.0, 20.0)
