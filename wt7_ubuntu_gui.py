@@ -16,7 +16,7 @@ from wt7_config import B210Calibration, B210_CAL_LEVELS_DBM, PowerConfig, ScanCo
 from wt7_logging import EventLogger
 from wt7_solar import sun_equatorial, sun_position
 from wt7_state import AppStateStore, SystemRunState
-APP_VERSION = "v0.31"
+APP_VERSION = "v0.30"
 
 def hms(seconds: float) -> str:
     seconds %= 86400.0; h=int(seconds//3600); m=int((seconds%3600)//60); s=int(seconds%60); return f"{h:02d}:{m:02d}:{s:02d}"
@@ -831,8 +831,6 @@ class WT7App(QWidget):
                     self.run_thread(lambda s=_session:s.stop_all(),f'TrackFaultStop{_name}')
             self.emit(lambda data:self.mark_motion_exception(*data),(name,str(e)))
     def finish_tracking_fault_states(self):
-        if self.yfactor_active:
-            return
         for name in self.sessions:
             if name in self.cards and self.cards[name].state.text() not in ('FAULT','SLEW TIMEOUT'):
                 self.cards[name].set_state('STOPPED')
@@ -1188,17 +1186,10 @@ class WT7App(QWidget):
     def yfactor_dwell_correction_interval(self,dwell):
         interval=getattr(self.site,'track_interval_seconds',1.0) or 1.0
         return max(0.1,min(float(interval),1.0,float(dwell)))
-    def refresh_yfactor_dwell_tracking(self,antenna,session,target,hot_target=None,card_target=None,target_func=None,hot_target_func=None):
+    def refresh_yfactor_dwell_tracking(self,antenna,session,target,hot_target=None,card_target=None,target_func=None):
         if hot_target: self.emit(lambda t:self.apply_target(t),hot_target)
         self.emit(lambda data:self.set_antenna_target(*data),(antenna,card_target))
-        def target_callback(_pos):
-            latest=target_func()
-            hot_latest=hot_target_func() if hot_target_func else hot_target
-            if hot_latest: self.emit(lambda t:self.apply_target(t),hot_latest)
-            display_target=latest if card_target is not None else None
-            self.emit(lambda data:self.set_antenna_target(*data),(antenna,display_target))
-            return latest.azimuth,latest.elevation
-        target_callback=target_callback if target_func else None
+        target_callback=(lambda _p: (target_func().azimuth,target_func().elevation)) if target_func else None
         session.guarded_slew_to(target.azimuth,target.elevation,session.config.az_track_speed,session.config.el_track_speed,self.yfactor_stop,self.az_tol(),self.el_tol(),self.site.az_stop_tolerance_degrees,self.site.el_stop_tolerance_degrees,self.site.az_slow_speed,self.site.el_slow_speed,self.site.az_slow_threshold_degrees,self.site.el_slow_threshold_degrees,lambda p:self.emit(lambda data:self.update_position(*data),(antenna,p)),target_callback=target_callback,apply_az_low_to_high_compensation=False)
         pos=session.read_position(); self.emit(lambda data:self.update_position(*data),(antenna,pos))
         return target,pos
@@ -1218,23 +1209,10 @@ class WT7App(QWidget):
         if self.yfactor_active: dialog.set_status('Y Factor already running.'); return
         if antenna not in self.sessions: dialog.set_status('Connect and select an antenna before Y Factor measurement.'); return
         if self.power.current_power_measurement(antenna) is None: dialog.set_status(f"Start B210 power and wait for CH {self.power.power_channel_for_antenna(antenna)} readings before Y Factor measurement."); return
+        self.tracking_stop.set(); self.tracking_kind=''; self.tracking_nominal_az.clear(); self.tracking_az_comp_force.clear(); self.yfactor_hot_label=label; self.apply_target(self.yfactor_hot_target(label))
         self.yfactor_active=True; self.yfactor_stop.clear(); dialog.set_status(f'Y Factor starting on {antenna}.'); self.set_status(f'Y Factor starting on {antenna}.')
-        if not self.stop_tracking_for_yfactor_handover(dialog):
-            self.yfactor_active=False; self.yfactor_stop.clear(); return
-        self.yfactor_hot_label=label; self.apply_target(self.yfactor_hot_target(label))
         self.cards[antenna].set_state('YFACTOR')
         self.yfactor_thread=threading.Thread(target=lambda:self.yfactor_worker(dialog,antenna,label,cold_mode,cold_az,cold_el,cold_ra,cold_dec,count,dwell,alternate),daemon=True); self.yfactor_thread.start()
-    def stop_tracking_for_yfactor_handover(self,dialog):
-        self.tracking_stop.set()
-        thread=self.tracking_thread
-        if thread and thread.is_alive() and threading.current_thread() is not thread:
-            thread.join(timeout=min(10.0,max(2.0,self.site.track_interval_seconds+1.0)))
-            if thread.is_alive():
-                self.tracking_kind=''
-                msg='Previous tracking is still stopping; try Y Factor again in a moment.'
-                dialog.set_status(msg); self.set_status(msg); return False
-        self.tracking_thread=None; self.tracking_kind=''; self.tracking_nominal_az.clear(); self.tracking_az_comp_force.clear()
-        return True
     def stop_yfactor(self): self.yfactor_stop.set(); self.set_status('Y Factor stop requested.')
     def yfactor_resume_kind(self,label):
         return {'Sun':'sun','Moon':'moon','Source':'source'}.get(label,'')
@@ -1278,7 +1256,7 @@ class WT7App(QWidget):
             if session and target_func and time.monotonic()>=next_correction:
                 target=target_func(); hot_target=hot_target_func() if hot_target_func else None
                 display_target=target if card_target is not None else None
-                self.refresh_yfactor_dwell_tracking(antenna,session,target,hot_target,display_target,target_func,hot_target_func)
+                self.refresh_yfactor_dwell_tracking(antenna,session,target,hot_target,display_target,target_func)
                 next_correction=time.monotonic()+self.yfactor_dwell_correction_interval(dwell)
                 if self.yfactor_stop.is_set(): break
             m=self.power.current_power_measurement(antenna)
