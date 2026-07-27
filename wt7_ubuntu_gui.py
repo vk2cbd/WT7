@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Optional
 from PyQt5.QtCore import Qt, QSize, QTimer, pyqtSignal, QEvent
 from PyQt5.QtGui import QFont, QPainter, QPen, QColor
-from PyQt5.QtWidgets import QApplication, QCheckBox, QComboBox, QDialog, QDialogButtonBox, QFrame, QGridLayout, QHBoxLayout, QLabel, QLineEdit, QMessageBox, QPlainTextEdit, QPushButton, QTabWidget, QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget
+from PyQt5.QtWidgets import QApplication, QCheckBox, QComboBox, QDialog, QDialogButtonBox, QFrame, QGridLayout, QHBoxLayout, QLabel, QLineEdit, QMessageBox, QPlainTextEdit, QPushButton, QTabWidget, QTableWidget, QTableWidgetItem, QToolTip, QVBoxLayout, QWidget
 from wt7_antenna import Axis, Direction, Position, SafeAntenna, shortest_angle_delta
 from wt7_astro import TargetPosition, local_sidereal_time, moon_equatorial, moon_position, source_position
 from wt7_b210_power import B210PowerMeter, B210PowerMeterConfig, B210PowerReading
@@ -16,7 +16,7 @@ from wt7_config import B210Calibration, B210_CAL_LEVELS_DBM, PowerConfig, ScanCo
 from wt7_logging import EventLogger
 from wt7_solar import sun_equatorial, sun_position
 from wt7_state import AppStateStore, SystemRunState
-APP_VERSION = "v0.30"
+APP_VERSION = "v0.31"
 
 def hms(seconds: float) -> str:
     seconds %= 86400.0; h=int(seconds//3600); m=int((seconds%3600)//60); s=int(seconds%60); return f"{h:02d}:{m:02d}:{s:02d}"
@@ -158,10 +158,10 @@ class B210Panel(Panel):
 
 class ScanPlotWidget(QWidget):
     def __init__(self, axis, rows, parent=None):
-        super().__init__(parent); self.axis=axis; self.rows=rows; self.summary_text='Fit --'; self.setMinimumSize(560,340)
+        super().__init__(parent); self.axis=axis; self.rows=rows; self.summary_text='Fit --'; self.hover_points=[]; self.setMouseTracking(True); self.setMinimumSize(560,340)
     def paintEvent(self,event):
         painter=QPainter(self); painter.setRenderHint(QPainter.Antialiasing)
-        w,h=self.width(),self.height(); left,right,top,bottom=58,w-22,22,h-48
+        w,h=self.width(),self.height(); left,right,top,bottom=58,w-22,22,h-48; self.hover_points=[]
         painter.fillRect(0,0,w,h,QColor('white'))
         points=[(float(r['offset_degrees']),float(r['power_value'])) for r in self.rows if r.get('power_value') is not None]
         if not points:
@@ -197,13 +197,28 @@ class ScanPlotWidget(QWidget):
             if last: painter.drawLine(last[0],last[1],pnt[0],pnt[1])
             last=pnt
         painter.setBrush(QColor('#0057b8')); painter.setPen(QPen(QColor('#0057b8'),1))
-        for xval,yval in points: painter.drawEllipse(int(px(xval))-3,int(py(yval))-3,6,6)
+        for xval,yval in points:
+            sx=int(px(xval)); sy=int(py(yval)); painter.drawEllipse(sx-3,sy-3,6,6); self.hover_points.append((sx,sy,xval,yval))
         painter.setPen(QColor('#111111')); painter.drawText((left+right)//2-55,h-12,f'{self.axis.value} offset degrees')
         unit=str(self.rows[-1].get('power_unit','dBFS')); painter.save(); painter.translate(16,(top+bottom)//2+35); painter.rotate(-90); painter.drawText(0,0,unit); painter.restore()
         if fit:
             fwhm=2.35482*fit['sigma']; self.summary_text=f"Boresight error {fit['center']:+0.3f} deg; FWHM {fwhm:0.3f} deg; peak {fit['peak']:0.2f} {unit}; RMS {fit['rms']:0.3f} dB"
         else:
             self.summary_text='Gaussian fit unavailable'
+    def mouseMoveEvent(self,event):
+        closest=None; best_dist=10**9
+        for sx,sy,xval,yval in self.hover_points:
+            dist=(event.x()-sx)**2+(event.y()-sy)**2
+            if dist<best_dist:
+                best_dist=dist; closest=(xval,yval)
+        if closest and best_dist <= 100:
+            unit=str(self.rows[-1].get('power_unit','dBFS')) if self.rows else 'dBFS'
+            QToolTip.showText(event.globalPos(),f'{self.axis.value} {closest[0]:0.2f} deg\n{closest[1]:0.2f} {unit}',self)
+        else:
+            QToolTip.hideText()
+    def leaveEvent(self,event):
+        QToolTip.hideText()
+        super().leaveEvent(event)
     def fit_gaussian_with_slope(self,points):
         if len(points)<5: return None
         points=sorted(points); xs=[p[0] for p in points]; ys=[p[1] for p in points]; min_x,max_x=min(xs),max(xs); span=max_x-min_x
